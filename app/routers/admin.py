@@ -19,7 +19,7 @@ from app.deps import (
     require_csrf,
 )
 from app.models import EventType, Member, MemberStatus
-from app.security import client_ip, hash_ip, verify_password
+from app.security import DUMMY_PASSWORD_HASH, client_ip, hash_ip, verify_password
 from app.services.admin import (
     PER_PAGE_CHOICES,
     export_filename,
@@ -78,11 +78,13 @@ async def login_submit(request: Request, db: Session = Depends(get_db)) -> objec
     email = str(form.get("email") or "").strip().lower()
     password = str(form.get("password") or "")
 
-    ok_login = (
-        settings.admin_configured
-        and email == settings.admin_email.strip().lower()
-        and verify_password(password, settings.admin_password_hash)
-    )
+    email_matches = bool(settings.admin_configured) and email == settings.admin_email.strip().lower()
+    # Always run scrypt - against a dummy hash when the email does not match - so the
+    # response time cannot be used to tell a valid admin address from an unknown one.
+    # The verification must not sit behind ``and``: that would short-circuit it away.
+    stored_hash = settings.admin_password_hash if email_matches else DUMMY_PASSWORD_HASH
+    password_ok = verify_password(password, stored_hash)
+    ok_login = email_matches and password_ok
 
     if not ok_login:
         logger.warning("failed admin login attempt for %r", email)
@@ -142,6 +144,11 @@ async def members_list(request: Request, db: Session = Depends(get_db)) -> objec
     filters = parse_filters(dict(request.query_params))
     members, total = query_members(db, filters)
     pages = max(1, (total + filters.per_page - 1) // filters.per_page)
+    if filters.page > pages:
+        # A page past the end (typo or hostile input) is shown as the last page so the
+        # pager never renders "Trang 10000 / 3" and the table is not misleadingly empty.
+        filters.page = pages
+        members, total = query_members(db, filters)
     return render(
         request,
         "admin/members.html",

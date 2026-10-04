@@ -15,10 +15,6 @@ from app.security import CSRF_COOKIE_NAME, generate_csrf_token
 
 logger = logging.getLogger(__name__)
 
-SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-# Endpoints that are called by machines, not browsers: CSRF does not apply (documented).
-CSRF_EXEMPT_PREFIXES = ("/api/",)
-
 
 class RequestContextMiddleware:
     """Attach a request id + timing to every request and echo the id back."""
@@ -80,7 +76,15 @@ class SecurityHeadersMiddleware:
 
 
 class MaxBodySizeMiddleware:
-    """Reject oversized requests before they reach a handler (cheap DoS guard)."""
+    """Reject oversized requests *before* the app sees them (cheap DoS guard).
+
+    The ``Content-Length`` header is the fast path, but a chunked upload has no such
+    header: detecting the overshoot while the handler streams the body would let the
+    request be processed (and committed) before the 413 is sent. The body is therefore
+    buffered here up to ``max_request_bytes``; an oversized body is answered immediately
+    without ever calling the app, and an accepted body is replayed downstream exactly
+    once through a custom ``receive``.
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -89,8 +93,7 @@ class MaxBodySizeMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        settings = get_settings()
-        limit = settings.max_request_bytes
+        limit = get_settings().max_request_bytes
         headers = dict(scope.get("headers") or [])
         content_length = headers.get(b"content-length")
         if content_length:
@@ -102,27 +105,37 @@ class MaxBodySizeMiddleware:
                 await self._reject(scope, send, limit)
                 return
 
-        received = 0
-        too_large = False
-
-        async def receive_wrapper() -> Message:
-            nonlocal received, too_large
+        body = bytearray()
+        while True:
             message = await receive()
-            if message["type"] == "http.request":
-                received += len(message.get("body", b""))
-                if received > limit:
-                    too_large = True
-            return message
+            if message["type"] == "http.disconnect":
+                return  # the client went away: nothing to answer, nothing to buffer
+            if message["type"] != "http.request":
+                continue
+            body += message.get("body", b"")
+            if len(body) > limit:
+                await self._reject(scope, send, limit)
+                return
+            if not message.get("more_body", False):
+                break
 
-        async def send_wrapper(message: Message) -> None:
-            if too_large:
-                raise _BodyTooLarge
-            await send(message)
+        buffered = bytes(body)
+        delivered = False
 
-        try:
-            await self.app(scope, receive_wrapper, send_wrapper)
-        except _BodyTooLarge:
-            await self._reject(scope, send, limit)
+        async def replay_receive() -> Message:
+            """Hand the buffered body to the app once, then pass through to the server.
+
+            After that the underlying channel only carries ``http.disconnect``, which
+            ``StreamingResponse`` (the admin CSV export) listens to while it streams:
+            inventing a disconnect here would cancel the response body.
+            """
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": buffered, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
 
     @staticmethod
     async def _reject(scope: Scope, send: Send, limit: int) -> None:
@@ -154,12 +167,13 @@ class MaxBodySizeMiddleware:
         await send({"type": "http.response.body", "body": payload})
 
 
-class _BodyTooLarge(Exception):
-    pass
-
-
 class CSRFCookieMiddleware:
-    """Ensure a double-submit CSRF cookie exists and expose it to templates."""
+    """Ensure a double-submit CSRF cookie exists and expose it to templates.
+
+    CSRF exemption is per-endpoint, not per-prefix: the ``/api/`` routers are exempt
+    because they never depend on ``app.deps.require_csrf`` (they authenticate with
+    X-API-Key instead), while every browser POST route does.
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app

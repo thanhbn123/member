@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 CONSOLE_BACKEND = "console"
 SMTP_BACKEND = "smtp"
 SMTP_NOT_CONFIGURED = "SMTP_HOST is not configured"
+# Printed above every console email: the raw link below is a credential, so an operator
+# who accidentally ships EMAIL_MODE=console must see the warning in the logs.
+CONSOLE_LOCAL_BANNER = (
+    "[EMAIL][console] LOCAL MODE - the verification link below is a development secret, "
+    "never enable EMAIL_MODE=console in production"
+)
 
 
 @dataclass(slots=True)
@@ -146,8 +152,14 @@ def _verification_html(
 
 # --------------------------------------------------------------------------- backends
 def _print_console(to: str, subject: str, text_body: str) -> None:
-    """Greppable block: ``[EMAIL][console] to=<to> subject=<subject>`` then the body."""
+    """Greppable block: ``[EMAIL][console] to=<to> subject=<subject>``, local-mode banner, body.
+
+    The body is printed verbatim (raw URL on its own line): the local harness and the
+    tests read the link from stdout. The banner and the production guard in
+    ``app.config`` are what keep that from happening in a real deployment.
+    """
     print(f"[EMAIL][console] to={to} subject={subject}")
+    print(CONSOLE_LOCAL_BANNER)
     print(text_body if text_body.endswith("\n") else f"{text_body}\n", end="")
     print()
 

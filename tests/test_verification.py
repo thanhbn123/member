@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import timedelta
 
 import pytest
@@ -137,53 +138,73 @@ def test_token_reuse_is_rejected_and_member_stays_verified(web, mailbox, db_sess
 
 
 # --------------------------------------------------------------------------- race
+THREADS = 8
+
+
 def test_concurrent_verification_claims_the_token_exactly_once(web, mailbox, db_session):
-    """Two sessions race for the same token: exactly one wins, the loser gets ``used``."""
+    """A real race: N sessions hit the same token at once - exactly one may win.
+
+    Each thread owns its own ``Session`` (a Session is never shared across threads) and
+    they are released together through a ``Barrier``, so the atomic conditional UPDATE
+    in ``verify_email`` is what decides the winner - not the test's call order.
+    """
     _, email = web.register(email="verify-race@example.com")
     token = mailbox.latest_token()
     member = _member(db_session, email)
     assert member is not None
 
     factory = get_session_factory()
-    loser = factory()
-    winner = factory()
-    try:
-        # the loser reads the token while it is still unused ...
-        stale = loser.execute(
-            select(EmailVerificationToken).where(
-                EmailVerificationToken.token_hash == hash_token(token)
-            )
-        ).scalar_one()
-        assert stale.used_at is None
+    barrier = threading.Barrier(THREADS)
+    lock = threading.Lock()
+    statuses: list[str] = []
+    failures: list[str] = []
 
-        # ... the winner claims it first ...
-        first_outcome = verify_email(winner, token)
-        assert first_outcome.status == "verified"
-        assert first_outcome.member is not None
+    def attempt() -> None:
+        session = factory()
+        try:
+            barrier.wait(timeout=10)
+            outcome = verify_email(session, token)
+            with lock:
+                statuses.append(outcome.status)
+        except Exception as exc:  # reported through ``failures`` below
+            with lock:
+                failures.append(f"{type(exc).__name__}: {exc}")
+        finally:
+            session.close()
 
-        # ... and the loser's conditional UPDATE must not match any row.
-        second_outcome = verify_email(loser, token)
-        assert second_outcome.status == "used"
-    finally:
-        loser.close()
-        winner.close()
+    threads = [threading.Thread(target=attempt, daemon=True) for _ in range(THREADS)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not any(thread.is_alive() for thread in threads), "a verification thread never finished"
+    assert not failures, f"concurrent verification raised: {failures!r}"
+    assert len(statuses) == THREADS, statuses
+
+    winners = [status for status in statuses if status in {"verified", "already_verified"}]
+    losers = [status for status in statuses if status in {"used", "invalid"}]
+    assert len(winners) == 1, f"exactly one attempt may verify the token, got {statuses!r}"
+    assert len(losers) == THREADS - 1, f"every other attempt must see used/invalid, got {statuses!r}"
 
     db_session.expire_all()
-    verified = db_session.execute(
-        select(func.count(Member.id)).where(Member.status == "verified")
+    verified_members = db_session.execute(
+        select(func.count(Member.id)).where(Member.email_verified_at.is_not(None))
     ).scalar_one()
-    used = db_session.execute(
-        select(func.count(EmailVerificationToken.id)).where(
-            EmailVerificationToken.used_at.is_not(None)
-        )
-    ).scalar_one()
-    assert verified == 1, "exactly one member may end up verified"
-    assert used == 1, "exactly one token may be consumed"
+    assert verified_members == 1, "exactly one member row may carry email_verified_at"
 
-    member = _member(db_session, email)
-    assert member.status == "verified"
-    assert member.email_verified_at is not None
-    assert _event_types(db_session, member.id).count("EMAIL_VERIFIED") == 1
+    consumed = db_session.execute(
+        select(func.count(EmailVerificationToken.id)).where(EmailVerificationToken.used_at.is_not(None))
+    ).scalar_one()
+    assert consumed == 1, "exactly one token may be consumed"
+
+    raced = _member(db_session, email)
+    assert raced is not None
+    assert raced.status == "verified"
+    assert raced.email_verified_at is not None
+    assert _event_types(db_session, raced.id).count("EMAIL_VERIFIED") == 1, (
+        "exactly one EMAIL_VERIFIED event may be recorded"
+    )
 
 
 # --------------------------------------------------------------------------- resend

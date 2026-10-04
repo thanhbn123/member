@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     # ---------- admin ----------
     admin_email: str = ""
     admin_password_hash: str = ""
-    admin_session_max_age_seconds: int = 8 * 3600
 
     # ---------- email verification ----------
     verification_token_ttl_hours: int = 48
@@ -107,7 +106,8 @@ class Settings(BaseSettings):
     # ---------- integrations: verified-member webhook (disabled unless configured) ----------
     member_verified_webhook_url: str = ""
     member_verified_webhook_secret: str = ""
-    webhook_timeout_seconds: int = 10
+    # 5s per attempt keeps a verification request responsive (3 attempts + backoff worst case).
+    webhook_timeout_seconds: int = 5
     webhook_max_attempts: int = 3
     webhook_backoff_seconds: float = 1.0
 
@@ -139,6 +139,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _production_guards(self) -> Settings:
+        """Refuse to boot a production deployment that would leak member data.
+
+        Every message names the variable and says what to set, so an operator can fix
+        the deployment from the traceback alone. Non-production environments are never
+        blocked: local/staging may run sqlite, console email and an open API on purpose.
+        """
         if self.app_env == "production":
             problems: list[str] = []
 
@@ -147,17 +153,44 @@ class Settings(BaseSettings):
 
             if self.secret_key in ("", DEV_SECRET_KEY) or _placeholder(self.secret_key) or len(self.secret_key) < 32:
                 problems.append(
-                    "SECRET_KEY must be a strong random value of at least 32 characters in production"
+                    "SECRET_KEY must be a strong random value of at least 32 characters in production "
+                    "(set SECRET_KEY, e.g. `python -c \"import secrets; print(secrets.token_urlsafe(48))\"`)"
                 )
             if self.ip_hash_salt in ("", DEV_IP_SALT) or _placeholder(self.ip_hash_salt) or len(self.ip_hash_salt) < 16:
                 problems.append(
                     "IP_HASH_SALT must be a random value of at least 16 characters in production "
-                    "(raw IPs must never be stored)"
+                    "(raw IPs must never be stored) - set IP_HASH_SALT"
                 )
+            if _placeholder(self.member_api_key) or len(self.member_api_key) < 16:
+                problems.append(
+                    "MEMBER_API_KEY must be a random value of at least 16 characters in production "
+                    "(it protects member PII on /api/v1) - set MEMBER_API_KEY and send it as the "
+                    "X-API-Key header"
+                )
+            if not self.public_base_url:
+                problems.append(
+                    "PUBLIC_BASE_URL must be set to the public https:// origin of this deployment in "
+                    "production (verification links and session cookies are built from it)"
+                )
+            elif not self.public_base_url.startswith("https://"):
+                problems.append(
+                    "PUBLIC_BASE_URL must start with https:// in production - set PUBLIC_BASE_URL to the "
+                    "public https:// origin of this deployment"
+                )
+            if self.database_url.startswith("sqlite"):
+                problems.append(
+                    "DATABASE_URL must point at PostgreSQL in production - set DATABASE_URL to a "
+                    "postgresql+psycopg:// DSN"
+                )
+            if self.email_mode != "smtp":
+                problems.append(
+                    'EMAIL_MODE must be "smtp" in production: the console backend prints raw verification '
+                    'links (account take-over tokens) to stdout - set EMAIL_MODE=smtp'
+                )
+            elif not self.smtp_host:
+                problems.append("SMTP_HOST is required when EMAIL_MODE=smtp - set SMTP_HOST to your mail relay")
             if self.admin_configured and _placeholder(self.admin_password_hash):
                 problems.append("ADMIN_PASSWORD_HASH is still a placeholder - generate one with app.cli")
-            if self.email_mode == "smtp" and not self.smtp_host:
-                problems.append("SMTP_HOST is required when EMAIL_MODE=smtp")
             if problems:
                 raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self

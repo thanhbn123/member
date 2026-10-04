@@ -22,6 +22,9 @@ from app.models import Member, MemberAttribution, MemberStatus
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 PER_PAGE_CHOICES = (10, 25, 50, 100)
 DEFAULT_PER_PAGE = 25
+# Pagination is a UI concern: nothing useful lives past this page, and an unbounded
+# offset overflows SQLite (OverflowError) / PostgreSQL (int8) and kills the request.
+MAX_PAGE = 10_000
 
 
 @dataclass(slots=True)
@@ -83,6 +86,7 @@ def parse_filters(params: dict[str, Any]) -> MemberFilters:
         page = max(1, int(str(params.get("page") or 1)))
     except (TypeError, ValueError):
         page = 1
+    page = min(page, MAX_PAGE)  # clamp before the offset reaches the database
     try:
         per_page = int(str(params.get("per_page") or DEFAULT_PER_PAGE))
     except (TypeError, ValueError):

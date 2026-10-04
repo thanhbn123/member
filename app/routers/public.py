@@ -102,7 +102,9 @@ async def register_submit(request: Request, db: Session = Depends(get_db)) -> ob
         except NormalizationError as exc:
             errors.append(str(exc))
         else:
-            request.session["last_member_id"] = str(outcome.member.id)
+            # Do NOT remember the member here: /welcome must stay unreachable while the
+            # address is still pending. ``last_member_id`` is set after a successful
+            # verification (see /verify-email), which is the proof of ownership.
             target = f"/check-email?email={masked_query(outcome.member.email)}"
             if not outcome.verification_sent:
                 target += "&sent=0"
@@ -171,8 +173,21 @@ async def verify_email_route(
 
 @router.get("/welcome", include_in_schema=False)
 async def welcome(request: Request, db: Session = Depends(get_db)) -> object:
+    """Member welcome page - only the *verified* member is presented as a member.
+
+    The session key is written by /verify-email, so a pending (or unknown) visitor gets
+    the "verify your email" state instead of an empty success page.
+    """
     member = load_last_member(request, db)
-    return render(request, "welcome.html", member=member, cta_url=get_settings().public_base_url)
+    verified = bool(member is not None and member.is_verified)
+    return render(
+        request,
+        "welcome.html",
+        member=member,
+        verified=verified,
+        email_masked=mask_email(member.email) if member is not None else "",
+        cta_url=get_settings().public_base_url,
+    )
 
 
 @router.get("/robots.txt", include_in_schema=False)

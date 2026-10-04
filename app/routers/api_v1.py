@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.attribution import attribution_from_request
 from app.config import get_settings
 from app.db import get_db
-from app.deps import api_rate_limit, require_api_key
+from app.deps import api_rate_limit, enforce_rate_limit, register_rate_limit, require_api_key
 from app.models import Member
 from app.normalize import NormalizationError
 from app.schemas import (
@@ -68,7 +68,11 @@ async def api_health(db: Session = Depends(get_db)) -> dict:
     "/members/register",
     status_code=status.HTTP_201_CREATED,
     summary="Register a member (creates a pending member and sends the verification email)",
-    dependencies=[Depends(require_api_key), Depends(api_rate_limit)],
+    dependencies=[
+        Depends(require_api_key),
+        Depends(api_rate_limit),
+        Depends(register_rate_limit),
+    ],
 )
 async def api_register(
     payload: RegisterRequest, request: Request, db: Session = Depends(get_db)
@@ -99,7 +103,9 @@ async def api_register(
             "member": MemberOut.model_validate(outcome.member).model_dump(mode="json"),
             "duplicate": outcome.duplicate,
             "verification_sent": outcome.verification_sent,
-            "email_error": outcome.email_error,
+            # Never echo SMTP internals (host names, errno, credentials hints) to a caller;
+            # the full text stays in the EMAIL_FAILED event metadata.
+            "email_error": "send_failed" if outcome.email_error else None,
         },
         meta={"request_id": getattr(request.state, "request_id", None)},
     )
@@ -136,6 +142,9 @@ async def api_resend_verification(
     member = get_member(db, _parse_uuid(member_id))
     if member is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Member không tồn tại.")
+    # Per-member cap on top of the per-IP API limit: resending is cheap for an attacker and
+    # expensive for the member (mail-bombing), so one member can be re-mailed at most 3x/hour.
+    enforce_rate_limit(request, scope=f"resend:{member.id}", limit=3, window_seconds=3600)
     sent, error = resend_verification(db, member)
     return ok(
         {"member_id": str(member.id), "verification_sent": sent, "error": error},
@@ -149,7 +158,18 @@ async def api_resend_verification(
     dependencies=[Depends(require_api_key), Depends(api_rate_limit)],
 )
 async def api_lookup_member(email: str, request: Request, db: Session = Depends(get_db)) -> dict:
-    member = find_member_by_email(db, email)
+    try:
+        member = find_member_by_email(db, email)
+    except NormalizationError as exc:
+        # A malformed address is a client error: answer 422 with the documented
+        # envelope instead of letting the normaliser escape as a 500.
+        logger.debug("member lookup with an invalid email: %s", exc)
+        raise APIError(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "validation_error",
+            "Email không hợp lệ",
+            details=[{"field": exc.field or "email", "message": "Email không hợp lệ"}],
+        ) from exc
     if member is None:
         raise APIError(status.HTTP_404_NOT_FOUND, "not_found", "Member không tồn tại.")
     return ok(_detail(db, member), meta={"request_id": getattr(request.state, "request_id", None)})

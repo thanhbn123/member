@@ -47,6 +47,23 @@ def clean_text(
     return cleaned
 
 
+def clamp_text(value: str | None, *, max_length: int) -> str | None:
+    """Like :func:`clean_text`, but truncate instead of raising.
+
+    Used for *attribution* only (UTM values, landing URL, referrer, user agent, click
+    ids): those arrive from marketing links, are stored as metadata and are never
+    rendered as HTML, so an over-long value must be silently shortened rather than
+    turning an unauthenticated page view into a 500. Identity fields stay strict.
+    """
+    if value is None:
+        return None
+    cleaned = _CONTROL_CHARS.sub("", str(value))
+    cleaned = _WHITESPACE.sub(" ", cleaned).strip()
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
 def normalize_email(value: str | None) -> str:
     """Lower-case, IDN-normalised, deliverable-shaped email address."""
     cleaned = clean_text(value, max_length=320, required=True, field="Email", field_name="email")
