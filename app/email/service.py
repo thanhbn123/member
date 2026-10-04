@@ -96,6 +96,7 @@ def _verification_content(settings: Settings, member: Member, url: str) -> tuple
 
     html_body = _verification_html(
         brand=brand,
+        logo_url=_absolute_asset_url(settings.brand_logo_url, settings.public_base_url),
         primary_color=settings.brand_primary_color,
         greeting=greeting,
         url=url,
@@ -106,9 +107,19 @@ def _verification_content(settings: Settings, member: Member, url: str) -> tuple
     return subject, text_body, html_body
 
 
+def _absolute_asset_url(value: str, base_url: str) -> str:
+    """Email clients need an absolute URL; /static/... is resolved against PUBLIC_BASE_URL."""
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://")):
+        return value
+    return f"{base_url.rstrip('/')}/{value.lstrip('/')}"
+
+
 def _verification_html(
     *,
     brand: str,
+    logo_url: str,
     primary_color: str,
     greeting: str,
     url: str,
@@ -126,10 +137,17 @@ def _verification_html(
         if support_email
         else ""
     )
+    logo_block = (
+        f'<img src="{escape(logo_url, quote=True)}" alt="{safe_brand}" height="44" '
+        'style="height:44px;margin:0 0 12px;display:block;">'
+        if logo_url
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="vi">
   <body style="margin:0;padding:24px;background:#f3f4f6;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111827;">
     <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;padding:32px;">
+      {logo_block}
       <p style="margin:0 0 4px;font-size:18px;font-weight:700;color:{escape(primary_color)};">{safe_brand}</p>
       <p style="margin:0 0 20px;font-size:13px;color:#6b7280;">{safe_tagline}</p>
       <p style="margin:0 0 12px;font-size:15px;">{safe_greeting}</p>

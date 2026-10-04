@@ -43,7 +43,8 @@ class Settings(BaseSettings):
 
     # ---------- branding (no customer name is ever hard-coded) ----------
     brand_name: str = "MEMBER"
-    brand_logo_url: str = ""
+    brand_logo_url: str = ""  # app-relative path (/static/img/...) or an absolute http(s) URL
+    brand_favicon_url: str = ""  # optional; defaults to BRAND_LOGO_URL
     brand_primary_color: str = "#2563eb"
     brand_support_email: str = ""
     brand_tagline: str = "Đăng ký thành viên"
@@ -142,6 +143,24 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return (value or "").rstrip("/")
+
+    @field_validator("brand_logo_url", "brand_favicon_url")
+    @classmethod
+    def _validate_asset_url(cls, value: str) -> str:
+        """Allow an app-relative path (/static/...) or an absolute http(s) URL only.
+
+        Anything else (javascript:, data:, protocol-relative //host) is dropped instead of
+        being rendered into an <img src> or a <link href>.
+        """
+        value = (value or "").strip()
+        if not value:
+            return ""
+        if value.startswith("/") and not value.startswith("//"):
+            return value
+        lowered = value.lower()
+        if lowered.startswith(("http://", "https://")):
+            return value
+        return ""
 
     @field_validator("brand_primary_color")
     @classmethod

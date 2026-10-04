@@ -318,7 +318,8 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
 | `BRAND_NAME` | `MEMBER` | Recommended | Brand shown in templates and in the email subject/body. Falls back to `APP_NAME` when empty. |
-| `BRAND_LOGO_URL` | *(empty)* | Recommended | Absolute URL of the logo; empty renders text only. |
+| `BRAND_LOGO_URL` | *(empty)* | Recommended | Logo shown in the header of every page and in the verification email. App-relative (`/static/img/logo.png`) or absolute `http(s)://`; empty renders the brand name only. |
+| `BRAND_FAVICON_URL` | `BRAND_LOGO_URL` | Optional | Favicon + apple-touch-icon. App-relative (`/static/…`) or absolute `http(s)://`; anything else is ignored. |
 | `BRAND_PRIMARY_COLOR` | `#2563eb` | Recommended | Hex colour (`#rgb` or `#rrggbb`); invalid values raise at startup. Injected as the `--brand` CSS variable and used in the email button. |
 | `BRAND_SUPPORT_EMAIL` | *(empty)* | Recommended | Support address shown on pages, in the email footer and used as a last-resort envelope sender. Empty hides it. |
 | `BRAND_TAGLINE` | `Đăng ký thành viên` | Recommended | Short tagline under the brand name (the env file is read as UTF-8). It is also the landing-page hero title fallback when `LANDING_HERO_TITLE` is empty. |

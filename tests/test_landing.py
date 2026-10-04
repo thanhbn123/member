@@ -388,3 +388,68 @@ def _render_landing(**overrides) -> str:
     )
     context.update(overrides)
     return templates.env.get_template("landing.html").render(**context)
+
+
+# --------------------------------------------------------------------------- brand assets
+def test_logo_and_favicon_render_from_configuration(settings_env, client):
+    """The header logo and the favicon are configuration, never hard-coded in a template."""
+    settings_env(
+        BRAND_LOGO_URL="/static/img/qkwr-logo-horizontal.png",
+        BRAND_FAVICON_URL="/static/img/qkwr-icon-32.png",
+    )
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+
+    with TestClient(create_app()) as fresh:
+        page = fresh.get("/").text
+        assert 'src="/static/img/qkwr-logo-horizontal.png"' in page
+        assert 'rel="icon" href="/static/img/qkwr-icon-32.png"' in page
+        assert 'rel="apple-touch-icon" href="/static/img/qkwr-icon-32.png"' in page
+        # ...and the asset really exists and is served by the app.
+        logo = fresh.get("/static/img/qkwr-logo-horizontal.png")
+        assert logo.status_code == 200
+        assert logo.headers["content-type"] == "image/png"
+        assert len(logo.content) > 1000
+
+
+def test_favicon_falls_back_to_the_logo_and_hostile_urls_are_dropped(settings_env):
+    from app.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        brand_logo_url="/static/img/logo.png",
+        brand_favicon_url="javascript:alert(1)",
+    )
+    assert settings.brand_logo_url == "/static/img/logo.png"
+    assert settings.brand_favicon_url == ""  # rejected, not rendered
+
+    settings = Settings(_env_file=None, brand_logo_url="//evil.example.com/x.png")
+    assert settings.brand_logo_url == ""  # protocol-relative URLs are rejected too
+
+
+def test_verification_email_carries_an_absolute_logo(settings_env, monkeypatch):
+    """Email clients have no page base, so /static/... must be absolutised for the mail."""
+    from app.email import service as email_service
+    from app.email.service import send_verification_email
+    from app.models import Member
+
+    sent: dict = {}
+
+    def fake_send(to, subject, text_body, html_body=None):
+        sent.update(to=to, subject=subject, text=text_body, html=html_body or "")
+        return email_service.EmailResult(sent=True, backend="capture")
+
+    monkeypatch.setattr(email_service, "send_email", fake_send)
+    settings_env(
+        BRAND_LOGO_URL="/static/img/qkwr-logo-horizontal.png",
+        PUBLIC_BASE_URL="https://members.example.com",
+    )
+    member = Member(full_name="A", email="a@example.com", status="pending")
+    result = send_verification_email(member, "https://members.example.com/verify-email?token=t")
+
+    assert result.sent is True
+    assert 'src="https://members.example.com/static/img/qkwr-logo-horizontal.png"' in sent["html"]
+    assert "/static/img/qkwr-logo-horizontal.png" not in sent["text"]  # text stays link-only
+    assert "https://members.example.com/verify-email?token=t" in sent["text"]

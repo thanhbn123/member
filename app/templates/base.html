@@ -6,6 +6,11 @@
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}{{ brand.name }}{% endblock %}</title>
   {% if brand.tagline %}<meta name="description" content="{{ brand.tagline }}">{% endif %}
+  {# Logo / favicon come from configuration (BRAND_LOGO_URL, BRAND_FAVICON_URL). #}
+  {% if brand.favicon_url %}
+  <link rel="icon" href="{{ brand.favicon_url }}" sizes="any">
+  <link rel="apple-touch-icon" href="{{ brand.favicon_url }}">
+  {% endif %}
   {# Brand colour is injected from configuration / environment - never hard-coded. #}
   <style nonce="{{ csp_nonce }}">
     :root {
@@ -53,7 +58,7 @@
     <div class="wrap header-inner">
       <a class="brand" href="/">
         {% if brand.logo_url %}
-        <img class="brand-logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}" height="32">
+        <img class="brand-logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}" height="40">
         {% endif %}
         <span class="brand-text">
           <span class="brand-name">{{ brand.name }}</span>

@@ -27,6 +27,15 @@ class Brand:
     logo_url: str
     primary_color: str
     support_email: str
+    favicon_url: str = ""
+
+    def absolute_logo_url(self, base_url: str) -> str:
+        """Absolute logo URL for contexts without a page base (email clients)."""
+        if not self.logo_url:
+            return ""
+        if self.logo_url.startswith(("http://", "https://")):
+            return self.logo_url
+        return f"{base_url.rstrip('/')}/{self.logo_url.lstrip('/')}"
 
 
 def get_brand() -> Brand:
@@ -37,6 +46,7 @@ def get_brand() -> Brand:
         logo_url=settings.brand_logo_url,
         primary_color=settings.brand_primary_color,
         support_email=settings.brand_support_email,
+        favicon_url=settings.brand_favicon_url or settings.brand_logo_url,
     )
 
 
