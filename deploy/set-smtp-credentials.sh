@@ -67,13 +67,19 @@ chmod 600 "$BACKUP"
 say
 say "previous SMTP settings backed up to $BACKUP"
 
-# Write the new values. The secret travels over stdin (never argv, never the environment).
-printf '%s\n' "$NORMALIZED" | python3 - "$ENV_FILE" "$GMAIL" "$FROM_NAME" "$SMTP_HOST_VALUE" "$SMTP_PORT_VALUE" <<'PY'
+# Write the new values. The secret travels on file descriptor 3 - NOT on stdin, because the
+# heredoc below already owns stdin (a pipe would be silently discarded and the password would
+# end up empty), and never in argv or in the environment block.
+python3 - "$ENV_FILE" "$GMAIL" "$FROM_NAME" "$SMTP_HOST_VALUE" "$SMTP_PORT_VALUE" 3<<<"$NORMALIZED" <<'PY'
+import os
 import pathlib
 import sys
 
 env_path, gmail, from_name, host, port = sys.argv[1:6]
-password = sys.stdin.readline().rstrip("\n")
+with os.fdopen(3) as handle:
+    password = handle.read().strip()
+if not password:
+    raise SystemExit("no App Password reached the writer (fd 3 was empty)")
 
 updates = {
     "EMAIL_MODE": "smtp",
