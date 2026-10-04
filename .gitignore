@@ -31,3 +31,6 @@ htmlcov/
 
 # --- logs -------------------------------------------------------------------
 *.log
+
+# Internal build/coordination document (not part of the published deliverable)
+docs/INTERNAL_CONTRACT.md
