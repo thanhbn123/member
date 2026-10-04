@@ -1,0 +1,70 @@
+# MEMBER service - production stack (app + PostgreSQL + optional internal SMTP sink).
+#
+#   cd /srv/member && docker compose --env-file env/stack.env -f app/deploy/docker-compose.yml up -d --build
+# Layout: /srv/member/app (git clone) + /srv/member/env (secrets, mode 600)
+#
+# Secrets live in env/stack.env and env/app.env (mode 600, never in git).
+# The app port is published on loopback only: the shared Caddy reverse proxy on the
+# host terminates TLS and proxies to 127.0.0.1:18090.
+
+name: member
+
+services:
+  member-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - member-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [member]
+    # No published port: the database is reachable only from this compose network.
+
+  member-mailpit:
+    # Internal SMTP sink used until real SMTP credentials are configured.
+    # It accepts every message and never delivers it; read it on 127.0.0.1:8025.
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:8025:8025"   # web UI + API, loopback only
+    networks: [member]
+
+  member-app:
+    build:
+      context: ..
+      dockerfile: deploy/app.Dockerfile
+    image: member-app:latest
+    restart: unless-stopped
+    env_file:
+      - ../../env/app.env
+    depends_on:
+      member-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18090:8000"  # shared Caddy proxies here; loopback only
+    networks: [member]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  member-db:
+
+networks:
+  member:
+    name: member

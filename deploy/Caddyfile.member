@@ -1,0 +1,43 @@
+# MEMBER service - reverse proxy block for the SHARED Caddy instance on the VPS.
+#
+# The Caddyfile is edited in place (backup first) and reloaded without downtime:
+#
+#   cp /srv/vip-staging-proxy/Caddyfile /srv/vip-staging-proxy/Caddyfile.bak-$(date +%F-%H%M)
+#   cat deploy/Caddyfile.member >> /srv/vip-staging-proxy/Caddyfile
+#   docker exec vip-staging-caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   docker exec vip-staging-caddy caddy reload   --config /etc/caddy/Caddyfile --adapter caddyfile
+#
+# Caddy obtains and renews the Let's Encrypt certificate automatically (ports 80/443 are
+# already served by this container) and redirects http -> https on its own.
+#
+# `read_timeout 75s` matters: a verification request also fires the webhook (3 attempts x
+# 5 s) and the Meta call, so the documented worst case is ~28 s and the default 30 s proxy
+# timeout would cut it off even though the verification had already been committed.
+
+member.quangkhoiwellnessretreat.com {
+	encode zstd gzip
+
+	# Caddy appends the real peer address to X-Forwarded-For; the application trusts
+	# exactly this one proxy (TRUSTED_PROXY_HEADERS=true) and reads the rightmost hop.
+	reverse_proxy 127.0.0.1:18090 {
+		header_up X-Real-IP {remote_host}
+		transport http {
+			read_timeout 75s
+			write_timeout 75s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access-member.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+}
