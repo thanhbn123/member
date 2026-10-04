@@ -2,14 +2,12 @@
 
 {% block title %}{{ member.full_name }} — Thành viên — {{ brand.name }}{% endblock %}
 {% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
-{% block nav %}
-<nav class="site-nav" aria-label="Điều hướng chính">
-  <a href="/admin/members">Thành viên</a>
-</nav>
-{% endblock %}
+{% block nav %}{% include "admin/_nav.html" %}{% endblock %}
 
 {% block content %}
 <p class="breadcrumb"><a href="/admin/members">← Danh sách thành viên</a></p>
+
+{% include "admin/_flash.html" %}
 
 <div class="page-head">
   <div>
@@ -47,6 +45,43 @@
     <dt>Ghi chú</dt>
     <dd>{{ member.notes or '—' }}</dd>
   </dl>
+</section>
+
+<section class="card">
+  <h2 class="section-title">Quản lý thành viên</h2>
+  <p class="muted">
+    Mỗi thay đổi được ghi vào nhật ký sự kiện (<span class="mono">MEMBER_UPDATED</span>) kèm email
+    quản trị và giá trị cũ/mới.
+  </p>
+  <form method="post" action="/admin/members/{{ member.id }}" class="form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+
+    <div class="field">
+      <label for="status">Trạng thái</label>
+      <select id="status" name="status">
+        {% for st in statuses|default([]) %}
+        <option value="{{ st }}" {% if st == member.status %}selected{% endif %}>{{ status_labels.get(st, st) if status_labels else st }} ({{ st }})</option>
+        {% endfor %}
+      </select>
+      <p class="hint">Đổi trạng thái chỉ cập nhật hồ sơ quản lý; mốc “Xác minh email lúc” chỉ được ghi khi thành viên tự bấm liên kết trong email.</p>
+    </div>
+
+    <div class="field">
+      <label for="notes">Ghi chú nội bộ</label>
+      <textarea id="notes" name="notes" rows="4" maxlength="{{ notes_max_length|default(2000) }}">{{ member.notes or '' }}</textarea>
+      <p class="hint">Tối đa {{ notes_max_length|default(2000) }} ký tự. Để trống nếu không có ghi chú.</p>
+    </div>
+
+    <div class="field">
+      <label class="check" for="consent_marketing">
+        <input type="checkbox" id="consent_marketing" name="consent_marketing" value="1"
+               {% if member.consent_marketing %}checked{% endif %}>
+        <span>Đồng ý nhận tin marketing</span>
+      </label>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Lưu thay đổi</button>
+  </form>
 </section>
 
 <section class="card">

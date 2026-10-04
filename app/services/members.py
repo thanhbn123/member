@@ -190,8 +190,12 @@ def register_member(
             email_error=error,
         )
 
-    record_event(db, EventType.REGISTER_STARTED, None, started_metadata)
+    # The id is generated up front so the very first event is attached to the member: the
+    # admin timeline then shows the whole funnel. The event is written *after* the member row
+    # exists, because member_events.member_id is a foreign key.
+    member_id = uuid.uuid4()
     member = Member(
+        id=member_id,
         full_name=full_name,
         email=normalized_email,
         phone=normalized_phone,
@@ -223,6 +227,7 @@ def register_member(
             source=source,
         )
 
+    record_event(db, EventType.REGISTER_STARTED, member_id, started_metadata)
     _apply_attribution(db, member, attribution)
     raw_token, _ = issue_verification_token(db, member)
     record_event(db, EventType.REGISTER_COMPLETED, member.id, {"source": source})

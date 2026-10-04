@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% set s = stats %}
+{% set rows = recent|default([], true) %}
+{% set sources = top_sources|default([], true) %}
+{% set campaigns = top_campaigns|default([], true) %}
+{% set days = series|default([], true) %}
+
+{% block title %}Bảng điều khiển — {{ brand.name }}{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
+{% block nav %}{% include "admin/_nav.html" %}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Bảng điều khiển</h1>
+    <p class="page-subtitle">Tổng quan thành viên và kênh đăng ký.</p>
+  </div>
+  <div class="toolbar">
+    {% if admin_email %}<span class="muted">{{ admin_email }}</span>{% endif %}
+    <a class="btn btn-ghost" href="/admin/members">Danh sách thành viên</a>
+    <a class="btn btn-ghost" href="/admin/members.csv">Xuất CSV</a>
+    <a class="btn btn-ghost" href="/register" target="_blank" rel="noopener">Trang đăng ký</a>
+  </div>
+</div>
+
+{% include "admin/_flash.html" %}
+
+<section class="stat-grid" aria-label="Chỉ số tổng quan">
+  <div class="stat-card">
+    <span class="stat-label">Tổng thành viên</span>
+    <span class="stat-value stat-total">{{ s.total }}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Chờ xác minh</span>
+    <span class="stat-value stat-pending">{{ s.pending }}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Đã xác minh</span>
+    <span class="stat-value stat-verified">{{ s.verified }}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Tỷ lệ xác minh</span>
+    <span class="stat-value stat-rate">{{ s.verification_rate }}%</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Đăng ký 7 ngày qua</span>
+    <span class="stat-value stat-week">{{ s.last_days }}</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Đồng ý nhận tin</span>
+    <span class="stat-value stat-consent">{{ s.consent_marketing }}</span>
+  </div>
+  {% if s.unsubscribed %}
+  <div class="stat-card">
+    <span class="stat-label">Đã huỷ đăng ký</span>
+    <span class="stat-value stat-unsubscribed">{{ s.unsubscribed }}</span>
+  </div>
+  {% endif %}
+  {% if s.blocked %}
+  <div class="stat-card">
+    <span class="stat-label">Bị chặn</span>
+    <span class="stat-value stat-blocked">{{ s.blocked }}</span>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2 class="section-title">Đăng ký theo ngày</h2>
+  <p class="muted">14 ngày gần nhất, theo ngày UTC. Cột trống là ngày không có đăng ký nào.</p>
+  {#
+    Bar heights come from decile classes (.bar-0 … .bar-100), never from a `style`
+    attribute: the CSP is nonce based and a nonce covers <style> elements, not style
+    attributes, so `style="height: 42%"` would simply be dropped by the browser.
+  #}
+  <div class="chart-scroll">
+    <div class="chart" role="group" aria-label="Số thành viên đăng ký mỗi ngày trong 14 ngày gần nhất">
+      {% for day in days %}
+      <div class="chart-col">
+        <span class="chart-value">{{ day.count }}</span>
+        <div class="bar {{ day.bar_class }}" aria-hidden="true"></div>
+        <span class="chart-label">{{ day.label }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="split">
+  <section class="card">
+    <h2 class="section-title">Top 5 UTM source</h2>
+    <div class="table-wrap">
+      <table class="table table-compact">
+        <caption class="sr-only">Năm nguồn đăng ký nhiều nhất</caption>
+        <thead>
+          <tr>
+            <th scope="col">Nguồn</th>
+            <th scope="col">Số lượng</th>
+            <th scope="col">Tỷ lệ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sources %}
+          <tr>
+            <td>{{ row.value if row.value else 'không xác định' }}</td>
+            <td class="nowrap">{{ row.count }}</td>
+            <td class="nowrap muted">{{ row.percent }}%</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="empty">Chưa có dữ liệu attribution.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="section-title">Top 5 UTM campaign</h2>
+    <div class="table-wrap">
+      <table class="table table-compact">
+        <caption class="sr-only">Năm chiến dịch đăng ký nhiều nhất</caption>
+        <thead>
+          <tr>
+            <th scope="col">Chiến dịch</th>
+            <th scope="col">Số lượng</th>
+            <th scope="col">Tỷ lệ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in campaigns %}
+          <tr>
+            <td>{{ row.value if row.value else 'không xác định' }}</td>
+            <td class="nowrap">{{ row.count }}</td>
+            <td class="nowrap muted">{{ row.percent }}%</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="empty">Chưa có dữ liệu attribution.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <h2 class="section-title">10 thành viên mới nhất</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <caption class="sr-only">Mười thành viên đăng ký gần đây nhất</caption>
+      <thead>
+        <tr>
+          <th scope="col">Họ tên</th>
+          <th scope="col">Email</th>
+          <th scope="col">Trạng thái</th>
+          <th scope="col">UTM source</th>
+          <th scope="col">Ngày tạo</th>
+          <th scope="col"><span class="sr-only">Thao tác</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in rows %}
+        <tr>
+          <td><a href="/admin/members/{{ m.id }}">{{ m.full_name }}</a></td>
+          <td class="nowrap">{{ m.email }}</td>
+          <td><span class="pill pill-{{ m.status }}">{{ m.status }}</span></td>
+          <td>{{ m.attribution.utm_source if m.attribution else '' }}</td>
+          <td class="nowrap">{{ m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else '' }}</td>
+          <td class="nowrap">
+            {% if m.status == 'pending' %}
+            <form method="post" action="/admin/members/{{ m.id }}/resend-verification" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+              <input type="hidden" name="next" value="/admin/dashboard">
+              <button type="submit" class="btn btn-ghost btn-sm">Gửi lại email</button>
+            </form>
+            {% endif %}
+            <a href="/admin/members/{{ m.id }}">Chi tiết</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">Chưa có thành viên nào.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="section-title">Thao tác nhanh</h2>
+  <div class="actions actions-start">
+    <a class="btn btn-ghost" href="/admin/members">Danh sách thành viên</a>
+    <a class="btn btn-ghost" href="/admin/members.csv">Xuất CSV (toàn bộ)</a>
+    <a class="btn btn-ghost" href="/register" target="_blank" rel="noopener">Mở trang đăng ký</a>
+  </div>
+  {% if generated_at %}
+  <p class="muted hint">Số liệu tính lúc {{ generated_at.strftime('%Y-%m-%d %H:%M') }} UTC.</p>
+  {% endif %}
+</section>
+{% endblock %}

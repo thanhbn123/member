@@ -1,0 +1,434 @@
+/* MEMBER - landing page stylesheet (GET /).
+ *
+ * Loaded after app.css, so it may refine shared selectors - but only under the
+ * `body.landing` scope, which the landing template sets via {% block body_class %}.
+ *
+ * Mobile first. No CDN, no @import, no web font: a system serif stack for headings and
+ * the system sans stack (app.css) for body copy.
+ *
+ * Colour system: the primary colour is NEVER written here - `--brand` is injected by
+ * base.html from BRAND_PRIMARY_COLOR (the brand's Pine Teal in production, #2563eb when
+ * unconfigured). The cream canvas, ink, muted and rule tokens below are the brand's
+ * supporting palette; every accent is derived from `--brand` with color-mix() inside
+ * @supports, so a browser without color-mix keeps the neutral fallback instead of
+ * losing the rule.
+ *
+ * Layout switches only through classes (never a style attribute, which the nonce based
+ * CSP would block).
+ */
+
+/* ============================================================== colour system */
+
+body.landing {
+  /* supporting palette (light theme = default) */
+  --cream: #fef7ef;        /* page canvas */
+  --cream-card: #fff8f0;   /* cards, header, footer */
+  --wash: #f7efe4;         /* soft section band */
+  --ink: #13322c;          /* headings */
+  --ink-body: #141414;     /* body copy */
+  --muted: #4b5f58;        /* secondary copy (6.4:1 on the cream canvas) */
+  --on-brand: #fef7ef;     /* text on a primary surface (>= 9:1 on the brand colour) */
+  --accent: var(--brand);  /* links, eyebrow, ticks */
+  --border: #e7dfd3;
+  --rule: #ddd1c1;
+  --shadow: 0 1px 2px rgba(19, 50, 44, .04), 0 16px 34px rgba(19, 50, 44, .06);
+
+  /* app.css tokens, re-pointed at the brand canvas */
+  --bg: var(--cream);
+  --surface: var(--cream-card);
+  --text: var(--ink-body);
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  color: var(--text);
+}
+
+body.landing a:not(.btn) { color: var(--accent); }
+
+body.landing .btn-primary { color: var(--on-brand); }
+body.landing .btn-primary:hover { filter: brightness(1.08); }
+
+body.landing .btn-ghost {
+  background: transparent;
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+/* Headings: light serif, ink teal-brown. */
+body.landing .hero-title,
+body.landing .section-heading,
+body.landing .benefit-title,
+body.landing .step-title,
+body.landing .register-title,
+body.landing .faq-question,
+body.landing .brand-name {
+  font-family: Georgia, "Times New Roman", "Noto Serif", "Songti SC", serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: .004em;
+}
+
+/* ------------------------------------------------------------------ shell */
+
+body.landing .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom-color: var(--rule);
+  box-shadow: 0 1px 0 var(--rule);
+}
+
+body.landing .header-inner { flex-wrap: wrap; gap: .5rem 1rem; }
+body.landing .brand { gap: .75rem; }
+body.landing .brand-name { font-size: 1.12rem; }
+
+/* The hero carries the tagline, so the header keeps only the brand name. */
+body.landing .brand-tagline { display: none; }
+
+body.landing .main {
+  max-width: 1120px;
+  padding-top: 1.5rem;
+  padding-bottom: 3rem;
+}
+
+/* A long LANDING_CTA_TEXT may wrap inside the button on a narrow screen. */
+.landing-nav-cta { white-space: normal; text-align: center; }
+
+/* Anchors must clear the sticky header when a CTA scrolls to them. */
+#loi-ich, #dang-ky, #quy-trinh, #cau-hoi, #lien-he { scroll-margin-top: 96px; }
+
+.section { margin: 0 0 2.5rem; }
+
+.section-heading {
+  font-size: 1.32rem;
+  margin: 0 0 1.25rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ------------------------------------------------------------------- hero */
+
+.hero {
+  margin-bottom: 2.75rem;
+  padding: 2rem 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--wash) 0%, var(--surface) 72%);
+  box-shadow: var(--shadow);
+}
+
+.hero-eyebrow {
+  margin: 0 0 .6rem;
+  font-size: .76rem;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.hero-title {
+  font-size: 1.9rem;
+  line-height: 1.16;
+  margin: 0 0 .75rem;
+  max-width: 24ch;
+}
+
+.hero-subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 1.04rem;
+  line-height: 1.65;
+  max-width: 58ch;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin: 0 0 1.5rem;
+}
+
+.hero-trust {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem 1.25rem;
+  margin: 0;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--rule);
+  list-style: none;
+  color: var(--muted);
+  font-size: .875rem;
+}
+
+.hero-trust li { display: flex; align-items: center; gap: .4rem; }
+
+.hero-trust li::before {
+  content: "\2713"; /* ✓ */
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.hero-media { margin-top: 1.75rem; }
+
+.hero-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: cover;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+/* --------------------------------------------------------------- buttons */
+
+.btn-lg {
+  padding: .8rem 1.4rem;
+  font-size: 1.01rem;
+  letter-spacing: .01em;
+}
+
+/* -------------------------------------------------------------- benefits */
+
+.benefit-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.benefit-card {
+  padding: 1.5rem 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.benefit-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.6rem;
+  min-height: 2.6rem;
+  padding: 0 .45rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--wash);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.benefit-title { font-size: 1.1rem; margin: .9rem 0 .4rem; }
+.benefit-text { margin: 0; color: var(--muted); line-height: 1.6; }
+
+/* ----------------------------------------------------------------- form */
+
+.register-card {
+  max-width: 620px;
+  margin: 0 auto;
+  border-color: var(--border);
+  border-radius: var(--radius);
+}
+
+.register-title { font-size: 1.4rem; margin: 0 0 .3rem; }
+.register-subtitle { color: var(--muted); margin: 0 0 1.25rem; }
+
+/* --------------------------------------------------------- how it works */
+
+.steps-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-card {
+  padding: 1.35rem 1.35rem 1.5rem;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--wash);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: .95rem;
+}
+
+.step-title { font-size: 1.08rem; margin: .85rem 0 .35rem; }
+.step-text { margin: 0; color: var(--muted); line-height: 1.6; }
+
+/* ------------------------------------------------------------------ faq */
+
+.faq-list { display: grid; gap: .7rem; }
+
+.faq-item {
+  padding: .4rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.faq-question {
+  padding: .6rem 0;
+  font-size: 1.02rem;
+  cursor: pointer;
+}
+
+.faq-answer { margin: 0 0 .85rem; color: var(--muted); line-height: 1.65; }
+
+/* -------------------------------------------------------------- contact */
+
+.landing-contact {
+  padding: 1.75rem 1.35rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--wash);
+}
+
+.landing-contact .section-heading { border-bottom: 0; padding-bottom: 0; }
+
+.contact-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.1rem 1.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contact-item { min-width: 0; overflow-wrap: anywhere; }
+
+.contact-label {
+  display: block;
+  margin-bottom: .15rem;
+  color: var(--muted);
+  font-size: .74rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------- a11y/misc */
+
+body.landing summary:focus-visible,
+body.landing a:focus-visible,
+body.landing button:focus-visible,
+body.landing input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+body.landing input:focus,
+body.landing select:focus { border-color: var(--brand); }
+
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+  body.landing .btn { transition: filter .18s ease, background-color .18s ease, border-color .18s ease; }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .benefit-card { transition: transform .18s ease, box-shadow .18s ease; }
+  .benefit-card:hover { transform: translateY(-2px); }
+  .faq-item { transition: border-color .18s ease; }
+  .faq-item:hover { border-color: var(--rule); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.landing *,
+  body.landing *::before,
+  body.landing *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --------------------------------------------------------- >= 640px */
+
+@media (min-width: 640px) {
+  body.landing .main { padding-top: 2.25rem; }
+  body.landing .header-inner { flex-wrap: nowrap; }
+  .landing-nav-cta { white-space: nowrap; }
+  .hero { padding: 2.75rem 2.25rem; }
+  .hero-title { font-size: 2.35rem; }
+  .section { margin-bottom: 3.25rem; }
+  .section-heading { font-size: 1.55rem; }
+  .benefit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .steps-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .contact-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .landing-contact { padding: 2.25rem 2rem; }
+}
+
+/* --------------------------------------------------------- >= 900px */
+
+@media (min-width: 900px) {
+  .hero { padding: 3.5rem 3rem; }
+  .hero-title { font-size: 2.85rem; }
+  .hero.hero-with-media {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 3rem;
+  }
+  .hero.hero-with-media .hero-media { margin-top: 0; }
+  .hero.hero-with-media .hero-image { max-height: 440px; }
+  .benefit-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .contact-list { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+}
+
+/* -------------------------------------------------------------- dark mode */
+
+@media (prefers-color-scheme: dark) {
+  body.landing {
+    --cream: #0e1a17;
+    --cream-card: #132320;
+    --wash: #12211d;
+    --ink: #eaf3ef;
+    --ink-body: #e6ebe8;
+    --muted: #a8bdb6;
+    --on-brand: #f4faf7;
+    --accent: #9ecbbd; /* Pine Teal lightened for AA on the dark canvas */
+    --border: #26372f;
+    --rule: #2f463c;
+    --shadow: none;
+  }
+  body.landing .site-header { box-shadow: 0 1px 0 var(--rule); }
+}
+
+/* Derived accents from the configured brand colour (kept last so the mix follows the
+   active light/dark tokens above). */
+@supports (background: color-mix(in srgb, red 10%, white)) {
+  body.landing {
+    --border: color-mix(in srgb, var(--brand) 14%, var(--cream-card));
+    --rule: color-mix(in srgb, var(--brand) 26%, transparent);
+    --wash: color-mix(in srgb, var(--brand) 6%, var(--cream));
+  }
+}
+
+/* ---------------------------------------------------------------- print */
+
+@media print {
+  .hero-actions,
+  .register,
+  .faq,
+  .landing-nav { display: none; }
+  .hero,
+  .benefit-card,
+  .step-card,
+  .landing-contact { border-color: #ccc; box-shadow: none; background: none; }
+}

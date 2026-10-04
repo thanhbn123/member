@@ -9,11 +9,7 @@
 
 {% block title %}Thành viên — {{ brand.name }}{% endblock %}
 {% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
-{% block nav %}
-<nav class="site-nav" aria-label="Điều hướng chính">
-  <a href="/admin/members" aria-current="page">Thành viên</a>
-</nav>
-{% endblock %}
+{% block nav %}{% include "admin/_nav.html" %}{% endblock %}
 
 {% block content %}
 {# Current filters, url-encoded once; page/sort are position params, never carried over. #}
@@ -33,12 +29,10 @@
   <div class="toolbar">
     {% if admin_email %}<span class="muted">{{ admin_email }}</span>{% endif %}
     <a class="btn btn-ghost" href="{{ csv_href }}">Xuất CSV</a>
-    <form method="post" action="/admin/logout" class="inline-form">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
-      <button type="submit" class="btn btn-ghost">Đăng xuất</button>
-    </form>
   </div>
 </div>
+
+{% include "admin/_flash.html" %}
 
 <form method="get" action="/admin/members" class="card filter-bar" role="search">
   <div class="filter-grid">
@@ -101,7 +95,7 @@
         <th scope="col">Trạng thái</th>
         <th scope="col">UTM source</th>
         <th scope="col">Ngày tạo</th>
-        <th scope="col"><span class="sr-only">Chi tiết</span></th>
+        <th scope="col"><span class="sr-only">Thao tác</span></th>
       </tr>
     </thead>
     <tbody>
@@ -114,7 +108,18 @@
         <td><span class="pill pill-{{ m.status }}">{{ m.status }}</span></td>
         <td>{{ m.attribution.utm_source if m.attribution else '' }}</td>
         <td class="nowrap">{{ m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else '' }}</td>
-        <td><a href="/admin/members/{{ m.id }}">Chi tiết</a></td>
+        <td class="nowrap">
+          <a href="/admin/members/{{ m.id }}">Chi tiết</a>
+          {% if m.status == 'pending' %}
+          {# Re-sending is only meaningful while the member is still pending; the server
+             enforces the same rule, this is just the visible half of it. #}
+          <form method="post" action="/admin/members/{{ m.id }}/resend-verification" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+            <input type="hidden" name="next" value="/admin/members">
+            <button type="submit" class="btn btn-ghost btn-sm">Gửi lại email</button>
+          </form>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
       <tr>

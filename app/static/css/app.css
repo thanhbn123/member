@@ -254,3 +254,73 @@ input[aria-invalid="true"] { border-color: var(--danger); }
    nonce based CSP style-src policy never blocks it */
 .pixel-noscript { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
+/* ---------- admin dashboard (appended; nothing above this line was modified) ---------- */
+
+/* A <button> that must look like the other nav links: no default chrome, inherits the
+   nav's font and the brand colour. */
+.link-button {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: var(--brand);
+  cursor: pointer; text-decoration: none;
+}
+.link-button:hover { text-decoration: underline; }
+.site-nav-admin { flex-wrap: wrap; align-items: center; row-gap: .25rem; }
+
+/* ---------- stat cards ---------- */
+.stat-grid {
+  display: grid; gap: .75rem; margin-bottom: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: .9rem 1rem; display: flex; flex-direction: column;
+}
+.stat-label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+.stat-value { font-size: 1.6rem; font-weight: 700; line-height: 1.25; }
+
+/* Two management tables side by side on wide screens, stacked on mobile. */
+.split { display: grid; gap: 0; grid-template-columns: 1fr; }
+
+/* Small tables must not inherit the 760px min-width of the member list. */
+.table-compact { min-width: 0; }
+
+/* ---------- bar chart (pure HTML/CSS, no JS, no style attributes) ----------
+   The height of a bar is a decile class rather than an inline `style="height: 42%"`:
+   the CSP is nonce based and a nonce covers <style> elements, not style attributes,
+   so inline declarations would be dropped by the browser. */
+.chart-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.chart {
+  display: flex; align-items: flex-end; gap: .3rem; height: 180px;
+  min-width: 320px; padding-top: .25rem;
+}
+.chart-col {
+  flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column;
+  justify-content: flex-end; align-items: center; gap: .2rem;
+}
+.chart-value { font-size: .7rem; font-weight: 600; color: var(--muted); }
+.chart-label { font-size: .62rem; color: var(--muted); }
+.bar {
+  width: 100%; max-width: 2.5rem; min-height: 2px; background: var(--brand);
+  border-radius: 4px 4px 0 0;
+}
+.bar-0 { height: 2px; background: var(--border); border-radius: 0; }
+.bar-10 { height: 10%; }
+.bar-20 { height: 20%; }
+.bar-30 { height: 30%; }
+.bar-40 { height: 40%; }
+.bar-50 { height: 50%; }
+.bar-60 { height: 60%; }
+.bar-70 { height: 70%; }
+.bar-80 { height: 80%; }
+.bar-90 { height: 90%; }
+.bar-100 { height: 100%; }
+
+/* Small button used by the inline quick actions (member list / dashboard rows). */
+.btn-sm { padding: .3rem .55rem; font-size: .8rem; font-weight: 500; }
+.actions-start { justify-content: flex-start; }
+
+/* ---------- >= 900px ---------- */
+@media (min-width: 900px) {
+  .split { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+  .split > .card { margin-bottom: 1.25rem; }
+}
+

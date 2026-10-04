@@ -56,7 +56,15 @@ def _seed_members(db: Session, count: int) -> list[str]:
 
 
 # --------------------------------------------------------------------------- auth guard
-@pytest.mark.parametrize("path", ["/admin/members", "/admin/members.csv", f"/admin/members/{uuid.uuid4()}"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/admin/dashboard",
+        "/admin/members",
+        "/admin/members.csv",
+        f"/admin/members/{uuid.uuid4()}",
+    ],
+)
 def test_admin_routes_redirect_to_login_when_logged_out(client, path):
     response = client.get(path, follow_redirects=False)
 
@@ -64,6 +72,70 @@ def test_admin_routes_redirect_to_login_when_logged_out(client, path):
     assert "/admin/login" in response.headers["location"]
     if path.endswith(".csv"):
         assert "text/csv" not in response.headers.get("content-type", "")
+
+
+def test_admin_index_redirects_to_the_dashboard_when_logged_in(admin_client):
+    for path in ("/admin", "/admin/"):
+        response = admin_client.get(path, follow_redirects=False)
+
+        assert response.status_code == 303, response.text
+        assert response.headers["location"] == "/admin/dashboard"
+
+
+def test_admin_index_redirects_anonymous_visitors_to_the_login_page(client):
+    for path in ("/admin", "/admin/"):
+        response = client.get(path, follow_redirects=False)
+
+        assert response.status_code == 303, response.text
+        assert "/admin/login" in response.headers["location"]
+
+
+def test_admin_login_lands_on_the_dashboard(client, web, app_settings):
+    token = web.csrf_token("/admin/login")
+
+    response = client.post(
+        "/admin/login",
+        data={"email": app_settings.admin_email, "password": ADMIN_PASSWORD, "csrf_token": token},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/admin/dashboard"
+    assert client.get("/admin/dashboard").status_code == 200
+
+
+def test_admin_login_page_sends_an_authenticated_admin_to_the_dashboard(admin_client):
+    response = admin_client.get("/admin/login", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/dashboard"
+
+
+def test_admin_navigation_links_the_dashboard_members_and_logout(admin_client, web, db_session):
+    web.register(email="nav-links@example.com")
+    member = _member(db_session, "nav-links@example.com")
+    assert member is not None
+
+    for path in ("/admin/dashboard", "/admin/members", f"/admin/members/{member.id}"):
+        page = admin_client.get(path)
+
+        assert page.status_code == 200, page.text
+        assert '<a href="/admin/dashboard"' in page.text, f"{path} has no dashboard link"
+        assert '<a href="/admin/members"' in page.text, f"{path} has no member list link"
+        assert 'action="/admin/logout"' in page.text, f"{path} has no logout form"
+        assert 'aria-current="page"' in page.text, f"{path} marks no current page"
+
+
+@pytest.mark.parametrize("path", ["/admin/members/{id}", "/admin/members/{id}/resend-verification"])
+def test_admin_member_post_routes_require_a_session(client, path):
+    response = client.post(
+        path.format(id=uuid.uuid4()),
+        data={"status": "verified", "next": "/admin/dashboard"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303, response.text
+    assert "/admin/login" in response.headers["location"]
 
 
 def test_admin_login_with_wrong_password_is_401_and_grants_nothing(client, web, app_settings):

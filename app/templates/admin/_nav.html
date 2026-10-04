@@ -1,0 +1,11 @@
+{# Shared admin navigation. Included from every admin page so the two links and the
+   logout button exist exactly once; the logout POST carries the per-request CSRF token. #}
+{% set admin_path = request.url.path if request and request.url else '' %}
+<nav class="site-nav site-nav-admin" aria-label="Điều hướng quản trị">
+  <a href="/admin/dashboard" {% if admin_path == '/admin/dashboard' %}aria-current="page"{% endif %}>Bảng điều khiển</a>
+  <a href="/admin/members" {% if admin_path.startswith('/admin/members') %}aria-current="page"{% endif %}>Thành viên</a>
+  <form method="post" action="/admin/logout" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+    <button type="submit" class="link-button">Đăng xuất</button>
+  </form>
+</nav>

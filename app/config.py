@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,6 +47,21 @@ class Settings(BaseSettings):
     brand_primary_color: str = "#2563eb"
     brand_support_email: str = ""
     brand_tagline: str = "Đăng ký thành viên"
+
+    # ---------- contact details (landing footer; each one is hidden while empty) ----------
+    brand_phone: str = ""
+    brand_address: str = ""
+    brand_facebook_url: str = ""  # http(s) only - anything else is ignored
+    brand_zalo_url: str = ""  # http(s) only - anything else is ignored
+
+    # ---------- landing page (GET /) - every value is optional ----------
+    landing_hero_title: str = ""  # empty => BRAND_TAGLINE
+    landing_hero_subtitle: str = ""
+    landing_hero_image_url: str = ""  # http(s) only; the text layout works without it
+    # Up to 6 "icon|title|description" items joined by ";;" (see app/routers/public.py).
+    landing_benefits: str = ""
+    landing_cta_text: str = "Đăng ký ngay"
+    landing_show_form: bool = True  # False => the hero links to /register instead
 
     # ---------- database ----------
     database_url: str = "sqlite:///./member.db"
@@ -135,6 +151,23 @@ class Settings(BaseSettings):
             return "#2563eb"
         if not value.startswith("#") or len(value) not in (4, 7):
             raise ValueError("BRAND_PRIMARY_COLOR must be a hex color such as #2563eb")
+        return value
+
+    @field_validator("landing_hero_image_url", "brand_facebook_url", "brand_zalo_url")
+    @classmethod
+    def _http_url_only(cls, value: str) -> str:
+        """Keep http(s) URLs, blank everything else.
+
+        These values end up in ``src``/``href`` attributes, so ``javascript:alert(1)``,
+        ``data:...`` or a scheme-less string is dropped at load time (the router applies
+        the same rule again before rendering, see ``app.routers.public.safe_http_url``).
+        """
+        value = (value or "").strip()
+        if not value:
+            return ""
+        parts = urlsplit(value)
+        if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+            return ""
         return value
 
     @model_validator(mode="after")

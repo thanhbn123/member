@@ -15,7 +15,7 @@ tenant.
 `pytest` → secret scan) and reports `LOCAL ACCEPTANCE: 15/15 steps passed` on a local SQLite
 database, and the same 15 steps pass with `--database-url postgresql+psycopg://…` against a real
 PostgreSQL 16 instance (the whole pytest suite also passes with
-`TEST_DATABASE_URL=postgresql+psycopg://…`, 157 tests on both engines). **This milestone is
+`TEST_DATABASE_URL=postgresql+psycopg://…`, 246 tests on both engines at the time of writing). **This milestone is
 local-only: nothing is deployed to a VPS** — no server, domain, systemd unit or production
 database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the recipe to follow
 *when* a deployment is requested.
@@ -27,6 +27,14 @@ database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the reci
 * **Registration** — server-rendered Vietnamese registration form (`GET`/`POST /register`) with
   CSRF protection, rate limiting and server-side validation; the same operation is exposed as JSON
   for machine callers.
+* **Landing page (customer-facing)** — `GET /` renders a configurable, mobile-first landing page
+  (hero, benefits grid, “how it works”, FAQ, contact footer) instead of redirecting to `/register`.
+  It embeds the **same** registration form — identical fields, POST target `/register`, CSRF token
+  and hidden attribution inputs — so a conversion straight from the landing page is indistinguishable
+  from one on `/register`, and `GET /register` keeps working unchanged for existing ad links.
+  Every word, benefit, contact detail and link comes from `LANDING_*` / `BRAND_*` configuration
+  (see §4.12); with `LANDING_SHOW_FORM=false` the hero shows a CTA button linking to `/register`
+  instead of the form.
 * **Email verification (double opt-in)** — every registration issues a cryptographically random
   one-time token; only `sha256(token)` is stored. Tokens expire after
   `VERIFICATION_TOKEN_TTL_HOURS` (48 h by default), issuing a new token supersedes all previous
@@ -83,7 +91,7 @@ app/
 ├── web.py               Jinja2 rendering, Brand context object, email masking
 ├── cli.py               operator CLI: hash-password, check-config, init-db
 ├── routers/
-│   ├── public.py        HTML surface: /, /health, /register, /check-email, /verify-email, /welcome, /robots.txt
+│   ├── public.py        HTML surface: landing page (GET /), /health, /register, /check-email, /verify-email, /welcome, /robots.txt
 │   ├── api_v1.py        JSON API: register, get-by-id, lookup-by-email, resend-verification, health
 │   └── admin.py         admin UI: login/logout, member list, CSV export, member detail
 ├── services/
@@ -96,8 +104,8 @@ app/
 │   ├── dispatch.py      post-commit fan-out; never raises; records WEBHOOK_*/META_* events
 │   ├── webhook.py       signed member.verified delivery with retries and backoff
 │   └── meta.py          Meta Conversions API CompleteRegistration (opt-in, hashed PII only)
-├── templates/           Jinja2: base, register, check_email, verify_result, welcome, error, admin/*
-└── static/              css/app.css, js/register.js (first-touch attribution capture)
+├── templates/           Jinja2: base, landing, register, check_email, verify_result, welcome, error, admin/*
+└── static/              css/app.css, css/landing.css, js/register.js (first-touch attribution capture)
 ```
 
 Around the package: `alembic/versions/0001_initial.py` (single migration head), `tests/` (pytest
@@ -109,6 +117,9 @@ PostgreSQL 16 job), `pyproject.toml`, `alembic.ini`, `.env.example`.
 ```
 Browser / API client            FastAPI app                        Database            Email backend
 ──────────────────────────────  ─────────────────────────────────  ──────────────────  ─────────────
+GET  / (landing)           ───▶ render landing.html: hero + benefits + the SAME registration
+                                form (identical field names, CSRF cookie, attribution inputs),
+                                so this form posts to /register below without any special case
 GET  /register             ───▶ render form, issue CSRF cookie
 POST /register (form)      ───▶ require_csrf ─▶ register rate limit (key = sha256(ip+salt))
    or POST /api/v1/             require_api_key ─▶ api rate limit ─▶ register rate limit
@@ -208,7 +219,8 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Then open <http://localhost:8000/register>.
+Then open <http://localhost:8000/> for the landing page (the standalone form stays at
+<http://localhost:8000/register>).
 
 **SQLite default.** `.env.example` ships `DATABASE_URL=sqlite:///./member.db`, so a plain
 `cp .env.example .env` runs on SQLite with no edits; the PostgreSQL DSN is included as a commented
@@ -288,7 +300,11 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 | `BRAND_LOGO_URL` | *(empty)* | Recommended | Absolute URL of the logo; empty renders text only. |
 | `BRAND_PRIMARY_COLOR` | `#2563eb` | Recommended | Hex colour (`#rgb` or `#rrggbb`); invalid values raise at startup. Injected as the `--brand` CSS variable and used in the email button. |
 | `BRAND_SUPPORT_EMAIL` | *(empty)* | Recommended | Support address shown on pages, in the email footer and used as a last-resort envelope sender. Empty hides it. |
-| `BRAND_TAGLINE` | `Đăng ký thành viên` | Recommended | Short tagline under the brand name (the env file is read as UTF-8). |
+| `BRAND_TAGLINE` | `Đăng ký thành viên` | Recommended | Short tagline under the brand name (the env file is read as UTF-8). It is also the landing-page hero title fallback when `LANDING_HERO_TITLE` is empty. |
+| `BRAND_PHONE` | *(empty)* | Optional | Phone number shown in the landing-page contact band. Rendered as text and as a `tel:` link when it holds at least 6 digits (only digits and a leading `+` go into the `href`). Empty hides the field. |
+| `BRAND_ADDRESS` | *(empty)* | Optional | Postal address (single line) in the landing-page contact band. Empty hides the field. |
+| `BRAND_FACEBOOK_URL` | *(empty)* | Optional | Facebook page URL in the landing-page contact band. **`http(s)` only**: any other scheme (`javascript:`, `data:`, `ftp:`, …) is ignored at load time and the link is not rendered. |
+| `BRAND_ZALO_URL` | *(empty)* | Optional | Zalo URL (e.g. `https://zalo.me/<oa-id>`), same `http(s)`-only rule as above. Empty hides the field. |
 
 ### 4.3 Database
 
@@ -388,6 +404,35 @@ configured value (§10).
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
 | `GA4_MEASUREMENT_ID` | *(empty)* | Optional | GA4 measurement id (e.g. `G-XXXXXXXXXX`). When non-empty, the GA4 tag **is** rendered in `base.html` with the per-request CSP nonce and the CSP allow-list is widened for `googletagmanager.com` / `google-analytics.com`. Empty (default) renders nothing. |
+
+### 4.12 Landing page (`GET /`)
+
+Every value is optional, so an unconfigured install still renders a complete page with the brand
+name and a generic benefits trio — nothing here names a customer. The page is served by
+`app/templates/landing.html` + `app/static/css/landing.css`; the palette is **derived in CSS from
+the injected `--brand` variable** (`BRAND_PRIMARY_COLOR`), so no colour, benefit or link is
+hard-coded in the template.
+
+| Variable | Default | Required in production | Meaning |
+|---|---|---|---|
+| `LANDING_HERO_TITLE` | *(empty)* | Recommended | Hero `<h1>`. Empty falls back to `BRAND_TAGLINE`, then to the brand name. Capped at 160 characters. |
+| `LANDING_HERO_SUBTITLE` | *(empty)* | Recommended | Hero paragraph under the title. Empty hides it. Capped at 300 characters. |
+| `LANDING_HERO_IMAGE_URL` | *(empty)* | Optional | Optional hero image; `http(s)` only, anything else (e.g. `javascript:`) is ignored. Empty (default) renders the text-only hero, which is designed to look complete without an image. |
+| `LANDING_BENEFITS` | *(empty)* | Recommended | Benefits grid: up to **6** items, each `icon\|title\|description`, items separated by `;;`. An item with a missing/extra `\|` or an empty field is dropped silently; text is truncated (icon 8, title 80, description 240 chars) and anything past the 6th valid item is ignored. Empty or fully malformed → the generic defaults *Đăng ký nhanh* / *Xác minh email* / *Ưu đãi thành viên*. Example in [`.env.example`](.env.example). |
+| `LANDING_CTA_TEXT` | `Đăng ký ngay` | Recommended | Label of the header, hero and embedded-form call-to-action buttons. Capped at 40 characters. |
+| `LANDING_SHOW_FORM` | `true` | Recommended | `true` embeds the registration form in the page (anchor `#dang-ky`). `false` renders no form at all and points the hero CTA at `/register` instead — useful when an ad funnel must stay on its own page. |
+
+Behaviour worth knowing:
+
+* the embedded form is the **same** form as `register.html` (`full_name`, `email`, `phone`,
+  `company`, `consent_marketing`, `csrf_token` + the hidden `utm_*`/`landing_url`/`referrer`/`fbp`/
+  `fbc` inputs) and posts to the same `POST /register`, which is unchanged — CSRF, rate limiting,
+  normalisation, duplicate handling and the `/check-email` redirect all behave identically;
+* `app/static/js/register.js` is reused as-is (first-touch attribution capture + light client-side
+  validation), so there is no second copy of that logic;
+* a configured value is only ever rendered escaped (Jinja autoescape, no `|safe`) and the page
+  carries **no inline `<script>`, no `style="…"` attribute and no external asset** — the layout
+  switches through classes only, which keeps the nonce-based CSP intact.
 
 > `ENV_FILE` is not a `Settings` field: it is read from the **shell** environment and selects which
 > env file pydantic-settings loads (default `.env`).
@@ -1047,10 +1092,19 @@ authenticated `admin_client`, a real local HTTP server that records webhook deli
 `closed_port` for connection-error paths. Exporting **`TEST_DATABASE_URL`** makes the whole
 suite run against that database instead of the per-test SQLite file — truncating the four tables
 between tests — which is exactly what the CI `postgres` job does (so “the tests pass on
-PostgreSQL” is reproducible on any machine, not just in CI). The suite is **157 tests**, green on
-SQLite and on PostgreSQL.
+PostgreSQL” is reproducible on any machine, not just in CI). The suite is **246 tests** at the time
+of writing (37 of them landing-page tests), green on SQLite and on PostgreSQL.
 
 What is covered today:
+
+* **Landing page** (`tests/test_landing.py`) — `GET /` renders `landing.html` (200, not the old
+  307 → `/register` redirect) with the brand name and the embedded form; the form on `/` really
+  registers a member when posted with the CSRF token taken from `/` (member row + console email +
+  attribution); `LANDING_SHOW_FORM=false` renders a CTA link to `/register` and no `<form>`;
+  custom benefits render in order, while 20 items / empty fields / a 5 000-character description are
+  capped and never 500; a `javascript:` contact URL is never rendered as an `href`; the hero title
+  falls back to the tagline; and the page carries no `style="…"` attribute and no `<script>` without
+  the CSP nonce.
 
 * **Email** (`tests/test_email.py`) — console backend output and greppability, SMTP message
   building / `From` fallback, and the guarantee that a failing backend returns
@@ -1104,8 +1158,10 @@ default run leaves a throwaway `acceptance.db` in the repository root (git-ignor
 1. `alembic upgrade head`, then `alembic current` → `0001_initial (head)`.
 2. `python -m app.cli check-config` → no unexpected warnings; `WEBHOOK_ENABLED` / `META_ENABLED`
    match your intent.
-3. `uvicorn app.main:app --reload`, open `/register`, submit the form → redirected to
-   `/check-email`; the console prints the `[EMAIL][console] …` block with a verification URL.
+3. `uvicorn app.main:app --reload`, open `/` (the landing page): hero, benefits, the embedded form
+   and the contact band render, the header/hero CTA scrolls to `#dang-ky`, and submitting that form
+   registers a member → redirected to `/check-email`; the console prints the `[EMAIL][console] …`
+   block with a verification URL. `/register` still renders the standalone form.
 4. Open the verification link → “Xác minh thành công”, and the member shows `verified` in the admin
    list; re-opening the same link → “Liên kết đã được sử dụng” (400).
 5. `GET /health` → `{"status":"ok", …, "database":"ok"}`; `GET /api/v1/health` → envelope with

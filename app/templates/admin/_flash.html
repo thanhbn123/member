@@ -1,0 +1,8 @@
+{# Flash banner for the POST/redirect/GET actions. `flash` is built by
+   app.services.admin.resolve_flash from an allow-list, so an unknown or hostile
+   `?msg=` value renders nothing at all - raw query text is never echoed here. #}
+{% if flash %}
+<div class="alert {{ flash.css }}" role="{{ 'alert' if flash.level == 'error' else 'status' }}">
+  <p>{{ flash.text }}</p>
+</div>
+{% endif %}

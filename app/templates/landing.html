@@ -1,0 +1,216 @@
+{#
+  Public landing page (GET /).
+
+  Every word, colour, icon and link comes from configuration (Settings.landing_* /
+  brand_*) - see landing_context() in app/routers/public.py. The registration form
+  below is the SAME form as register.html: identical field names, POST target
+  (/register), hidden attribution inputs and CSRF token, so a conversion from this
+  page behaves exactly like one on the ad landing page.
+
+  CSP: no inline <script>, no style="..." attributes, no |safe, no external assets.
+  Layout only changes through classes (see landing.css).
+#}
+{% extends "base.html" %}
+{% set f = form if form is defined and form else {} %}
+{% set a = attribution if attribution is defined and attribution else {} %}
+{% set c = contact if contact is defined and contact else {} %}
+{% set consent_checked = f.get('consent_marketing') in ['true', 'on', '1', true, 'yes'] %}
+{% set consent_mandatory = consent_required|default(false) %}
+{% set cta_href = '#dang-ky' if show_form else '/register' %}
+
+{% block title %}{{ hero_title }} — {{ brand.name }}{% endblock %}
+
+{% block body_class %}landing{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/landing.css">
+{% endblock %}
+
+{% block nav %}
+<nav class="site-nav landing-nav" aria-label="Điều hướng chính">
+  <a class="btn btn-primary landing-nav-cta" href="{{ cta_href }}">{{ cta_text }}</a>
+</nav>
+{% endblock %}
+
+{% block content %}
+<section class="hero{% if hero_image_url %} hero-with-media{% endif %}" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="hero-eyebrow">{{ brand.name }}</p>
+    <h1 class="hero-title" id="hero-title">{{ hero_title }}</h1>
+    {% if hero_subtitle %}<p class="hero-subtitle">{{ hero_subtitle }}</p>{% endif %}
+    <p class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="{{ cta_href }}">{{ cta_text }}</a>
+      <a class="btn btn-ghost btn-lg" href="#loi-ich">Tìm hiểu thêm</a>
+    </p>
+    <ul class="hero-trust">
+      {% for bullet in trust_bullets %}<li>{{ bullet }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% if hero_image_url %}
+  <div class="hero-media">
+    <img class="hero-image" src="{{ hero_image_url }}" alt="{{ brand.name }}" decoding="async">
+  </div>
+  {% endif %}
+</section>
+
+<section class="section benefits" id="loi-ich" aria-labelledby="benefits-title">
+  <h2 class="section-heading" id="benefits-title">Quyền lợi thành viên</h2>
+  <ul class="benefit-grid">
+    {% for item in benefits %}
+    <li class="benefit-card">
+      <span class="benefit-icon" aria-hidden="true">{{ item.icon }}</span>
+      <h3 class="benefit-title">{{ item.title }}</h3>
+      <p class="benefit-text">{{ item.description }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% if show_form %}
+<section class="section register" id="dang-ky" aria-labelledby="register-title">
+  <div class="card register-card">
+    <h2 class="register-title" id="register-title">{{ cta_text }}</h2>
+    <p class="register-subtitle">Điền thông tin bên dưới, chúng tôi sẽ gửi email xác minh cho bạn.</p>
+
+    {% if success_message %}
+    <div class="alert alert-success" role="status" aria-live="polite">{{ success_message }}</div>
+    {% endif %}
+    {% if error_message %}
+    <div class="alert alert-error" role="alert" aria-live="assertive">{{ error_message }}</div>
+    {% endif %}
+    {% if errors %}
+    <div class="alert alert-error" id="form-errors" role="alert" aria-live="polite">
+      <p class="alert-title">Vui lòng kiểm tra lại thông tin:</p>
+      <ul class="alert-list">
+        {% for item in errors %}<li>{{ item }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/register" novalidate id="register-form" class="form" data-register-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      {# Attribution / tracking values (never required, always autoescaped). #}
+      <input type="hidden" name="utm_source" value="{{ a.get('utm_source', '') }}">
+      <input type="hidden" name="utm_medium" value="{{ a.get('utm_medium', '') }}">
+      <input type="hidden" name="utm_campaign" value="{{ a.get('utm_campaign', '') }}">
+      <input type="hidden" name="utm_content" value="{{ a.get('utm_content', '') }}">
+      <input type="hidden" name="utm_term" value="{{ a.get('utm_term', '') }}">
+      <input type="hidden" name="landing_url" value="{{ a.get('landing_url', '') }}">
+      <input type="hidden" name="referrer" value="{{ a.get('referrer', '') }}">
+      <input type="hidden" name="fbp" value="{{ a.get('fbp', '') }}">
+      <input type="hidden" name="fbc" value="{{ a.get('fbc', '') }}">
+
+      <div class="field">
+        <label for="full_name">Họ và tên <span class="req" aria-hidden="true">*</span></label>
+        <input type="text" id="full_name" name="full_name" required maxlength="200"
+               autocomplete="name" value="{{ f.get('full_name', '') }}"
+               aria-describedby="full_name_hint">
+        <p class="hint" id="full_name_hint">Tên đầy đủ của bạn.</p>
+      </div>
+
+      <div class="field">
+        <label for="email">Email <span class="req" aria-hidden="true">*</span></label>
+        <input type="email" id="email" name="email" required maxlength="320"
+               autocomplete="email" inputmode="email" value="{{ f.get('email', '') }}">
+      </div>
+
+      <div class="field">
+        <label for="phone">Số điện thoại</label>
+        <input type="tel" id="phone" name="phone" maxlength="64"
+               autocomplete="tel" inputmode="tel" value="{{ f.get('phone', '') }}">
+      </div>
+
+      <div class="field">
+        <label for="company">Công ty / tổ chức</label>
+        <input type="text" id="company" name="company" maxlength="200"
+               autocomplete="organization" value="{{ f.get('company', '') }}">
+      </div>
+
+      <div class="field field-check">
+        <label class="check" for="consent_marketing">
+          <input type="checkbox" id="consent_marketing" name="consent_marketing" value="true"
+                 {% if consent_checked %}checked{% endif %}
+                 {% if consent_mandatory %}required{% endif %}>
+          <span>Tôi đồng ý nhận thông tin, ưu đãi và bản tin qua email{% if consent_mandatory %} <span class="req" aria-hidden="true">*</span>{% else %} (không bắt buộc){% endif %}.</span>
+        </label>
+      </div>
+
+      <p class="field-error" data-register-error role="alert" aria-live="assertive" hidden></p>
+
+      <button type="submit" class="btn btn-primary btn-block">{{ cta_text }}</button>
+    </form>
+
+    <p class="cta-secondary">
+      Sau khi đăng ký, chúng tôi sẽ gửi cho bạn một <strong>email xác minh</strong>.
+      Hãy mở email và bấm vào liên kết xác minh để kích hoạt tài khoản thành viên.
+    </p>
+  </div>
+</section>
+{% endif %}
+
+<section class="section how" id="quy-trinh" aria-labelledby="how-title">
+  <h2 class="section-heading" id="how-title">Đăng ký chỉ với 3 bước</h2>
+  <ol class="steps-grid">
+    {% for step in steps %}
+    <li class="step-card">
+      <span class="step-number" aria-hidden="true">{{ loop.index }}</span>
+      <h3 class="step-title">{{ step.title }}</h3>
+      <p class="step-text">{{ step.description }}</p>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+{% if faq %}
+<section class="section faq" id="cau-hoi" aria-labelledby="faq-title">
+  <h2 class="section-heading" id="faq-title">Câu hỏi thường gặp</h2>
+  <div class="faq-list">
+    {% for item in faq %}
+    <details class="faq-item">
+      <summary class="faq-question">{{ item.q }}</summary>
+      <p class="faq-answer">{{ item.a }}</p>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if c.get('phone') or c.get('address') or c.get('facebook_url') or c.get('zalo_url') %}
+<footer class="section landing-contact" id="lien-he" aria-labelledby="contact-title">
+  <h2 class="section-heading" id="contact-title">Liên hệ với {{ brand.name }}</h2>
+  <ul class="contact-list">
+    {% if c.get('phone') %}
+    <li class="contact-item">
+      <span class="contact-label">Điện thoại</span>
+      {% if c.get('phone_href') %}
+      <a href="{{ c.get('phone_href') }}">{{ c.get('phone') }}</a>
+      {% else %}
+      <span>{{ c.get('phone') }}</span>
+      {% endif %}
+    </li>
+    {% endif %}
+    {% if c.get('address') %}
+    <li class="contact-item">
+      <span class="contact-label">Địa chỉ</span>
+      <span>{{ c.get('address') }}</span>
+    </li>
+    {% endif %}
+    {% if c.get('facebook_url') %}
+    <li class="contact-item">
+      <span class="contact-label">Facebook</span>
+      <a href="{{ c.get('facebook_url') }}" rel="noopener noreferrer" target="_blank">Theo dõi trên Facebook</a>
+    </li>
+    {% endif %}
+    {% if c.get('zalo_url') %}
+    <li class="contact-item">
+      <span class="contact-label">Zalo</span>
+      <a href="{{ c.get('zalo_url') }}" rel="noopener noreferrer" target="_blank">Liên hệ qua Zalo</a>
+    </li>
+    {% endif %}
+  </ul>
+</footer>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/register.js" defer nonce="{{ csp_nonce }}"></script>{% endblock %}

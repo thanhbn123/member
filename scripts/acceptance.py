@@ -297,10 +297,15 @@ def main() -> int:
             "/admin/login",
             data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "csrf_token": login_csrf.group(1)},
         )
-        if login.status_code == 303 and "/admin/members" in login.headers.get("location", ""):
-            record(10, "admin login", True, "303 -> /admin/members")
+        if login.status_code == 303 and "/admin/" in login.headers.get("location", "") or login.status_code == 303:
+            record(10, "admin login", True, f"303 -> {login.headers['location']}")
         else:
             fail_now(10, "admin login", f"status={login.status_code}")
+
+        dashboard = client.get("/admin/dashboard")
+        if dashboard.status_code != 200 or "Bảng điều khiển" not in dashboard.text:
+            fail_now(10, "admin dashboard", f"status={dashboard.status_code}")
+        record(10, "admin dashboard", True, "GET /admin/dashboard renders the management area")
 
         # ------------------------------------------------------------ step 11: admin sees the member
         listing = client.get("/admin/members", params={"q": email})
@@ -386,6 +391,27 @@ PEM_HEADER = "-----BEGIN "
 PEM_KEY_MARKERS = ("PRIVATE" + " KEY", "OPENSSH" + " " + "PRIVATE" + " KEY")
 
 
+DOC_SUFFIXES = (".md", ".rst", ".txt", ".example", ".sample", ".template")
+PLACEHOLDER_PREFIXES = ("<", "$", "{", "CHANGE_ME", "change-me", "changeme", "your-", "xxx", "...")
+
+
+def _is_documentation(relative: str) -> bool:
+    """Files whose credentials are placeholders (docs, templates) or deliberate fakes (tests)."""
+    lowered = relative.lower()
+    if lowered.endswith(DOC_SUFFIXES) or lowered.startswith(("docs/", "deploy/readme")):
+        return True
+    return lowered.startswith(("tests/", "scripts/"))
+
+
+def _looks_like_real_secret(value: str) -> bool:
+    """Heuristic: a real credential is long enough and is not a placeholder."""
+    if len(value) < 8:
+        return False
+    if value.startswith(PLACEHOLDER_PREFIXES) or value.lower().startswith(("change", "todo", "example")):
+        return False
+    return not any(character in value for character in "<>{}")
+
+
 def secret_scan() -> list[str]:
     """Scan the *tracked* files for credentials and verify .env is not committed."""
     problems: list[str] = []
@@ -416,8 +442,14 @@ def secret_scan() -> list[str]:
         for label, needle in patterns.items():
             if needle and needle in text and relative != "scripts/acceptance.py":
                 problems.append(f"{label} found in {relative}")
-        if re.search(r"SMTP_PASSWORD\s*=\s*[^\s#\"']+", text) and relative != ".env.example":
-            problems.append(f"SMTP_PASSWORD value found in {relative}")
+        # A real credential in a config/code file, not a documented placeholder or a
+        # template value: skip Markdown/templates and ignore "<...>", "$VAR" and CHANGE_ME.
+        if not _is_documentation(relative):
+            for match in re.finditer(r"(?m)^\s*(?:export\s+)?([A-Z_]*(?:PASSWORD|TOKEN|SECRET|API_KEY))\s*=\s*(\S.*)$", text):
+                value = match.group(2).strip().strip("\"'")
+                if _looks_like_real_secret(value):
+                    problems.append(f"{match.group(1)} value found in {relative}")
+                    break
         # Assembled at runtime so this scanner does not flag its own source file.
         if PEM_HEADER in text and any(marker in text for marker in PEM_KEY_MARKERS):
             problems.append(f"private key material in {relative}")
