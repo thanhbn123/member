@@ -15,7 +15,7 @@ tenant.
 `pytest` → secret scan) and reports `LOCAL ACCEPTANCE: 15/15 steps passed` on a local SQLite
 database, and the same 15 steps pass with `--database-url postgresql+psycopg://…` against a real
 PostgreSQL 16 instance (the whole pytest suite also passes with
-`TEST_DATABASE_URL=postgresql+psycopg://…`, 128 tests on both engines). **This milestone is
+`TEST_DATABASE_URL=postgresql+psycopg://…`, 157 tests on both engines). **This milestone is
 local-only: nothing is deployed to a VPS** — no server, domain, systemd unit or production
 database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the recipe to follow
 *when* a deployment is requested.
@@ -46,9 +46,9 @@ database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the reci
   detail with attribution and the last 200 events, and a CSV export that honours the active
   filters. The export is hardened against spreadsheet formula injection and emits a UTF-8 BOM so
   Excel opens Vietnamese text correctly.
-* **Public API** — `/api/v1` JSON with a single response envelope, optional `X-API-Key` auth, its
-  own rate limit, request-id echo, and 201-vs-200 semantics that make duplicate registrations
-  idempotent.
+* **Public API** — `/api/v1` JSON with a single response envelope, `X-API-Key` auth (mandatory in
+  production), its own rate limit, request-id echo, and 201-vs-200 semantics that make duplicate
+  registrations idempotent.
 * **Webhook** — a signed `member.verified` POST fired after the verification transaction has
   committed, with HMAC-SHA256 signature, timestamp, delivery id and exponential-backoff retries.
 * **Meta CAPI (preparation)** — `CompleteRegistration` events are built and sent to the
@@ -111,7 +111,7 @@ Browser / API client            FastAPI app                        Database     
 ──────────────────────────────  ─────────────────────────────────  ──────────────────  ─────────────
 GET  /register             ───▶ render form, issue CSRF cookie
 POST /register (form)      ───▶ require_csrf ─▶ register rate limit (key = sha256(ip+salt))
-   or POST /api/v1/             require_api_key ─▶ api rate limit
+   or POST /api/v1/             require_api_key ─▶ api rate limit ─▶ register rate limit
         members/register   ───▶ normalize_email / normalize_phone  (NormalizationError → 422)
                                 REGISTER_STARTED ────────────────▶ member_events
                                 new:      insert member + attribution + token
@@ -156,6 +156,11 @@ Email link: GET /verify-email?token=<raw>
                     ▼
               200 success page ("Xác minh thành công")
 ```
+
+The successful claim also stores the member in the session, which is exactly what `GET /welcome`
+renders: **verified member in the session → congratulations**; **no verified member (pending,
+unknown or a fresh browser) → the neutral “Email chưa được xác minh” state** with the resend /
+check-email links. The page never claims a membership it cannot prove.
 
 ### 2.4 The side-effect rule
 
@@ -300,9 +305,9 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 |---|---|---|---|
 | `SECRET_KEY` | `dev-insecure-secret-key-change-me` | **Yes (guard)** | Signs the session cookie (and therefore the admin session). Rotating it logs everybody out. Generate with `python -c "import secrets; print(secrets.token_urlsafe(64))"`. |
 | `IP_HASH_SALT` | `dev-insecure-ip-salt-change-me` | **Yes (guard)** | Salt for `SHA256(ip + salt)`. Raw IPs are never stored, so this value is what makes `ip_hash` non-reversible. |
-| `TRUSTED_PROXY_HEADERS` | `false` | **Yes** | Trust `X-Forwarded-For` / `X-Real-IP`. Enable **only** when every request arrives through a trusted reverse proxy, otherwise clients can spoof their IP and defeat IP rate limiting. |
+| `TRUSTED_PROXY_HEADERS` | `false` | Only behind **exactly one** trusted proxy | Honor proxy headers **only** under this contract: exactly ONE trusted reverse proxy sits in front and *appends* the peer address (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`). The app then uses the **rightmost** `X-Forwarded-For` hop — the value that proxy appended — falling back to `X-Real-IP`, then to the socket peer; everything the client sent to the left of the rightmost hop is ignored. Never enable it when the app is directly reachable by clients: the caller would then control its own rate-limit bucket and `ip_hash`. `X-Real-IP` also works (it is consulted when no `X-Forwarded-For` is present). |
 | `SECURITY_HEADERS_ENABLED` | `true` | **Yes** (keep `true`) | Emit CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy` and (when cookies are secure) HSTS. |
-| `MAX_REQUEST_BYTES` | `262144` (256 KiB) | Recommended | Bodies larger than this are rejected with `413` before reaching a handler. Keep the reverse proxy’s `client_max_body_size` in sync. |
+| `MAX_REQUEST_BYTES` | `262144` (256 KiB) | Recommended | Body cap. The middleware **buffers** the body and rejects anything over the cap with `413` — including a chunked body with no `Content-Length` — **without the handler ever running**: nothing is persisted and the request has no side effects. Keep the reverse proxy’s `client_max_body_size` in sync. |
 | `SESSION_COOKIE_NAME` | `member_session` | Recommended | Name of the signed session cookie (admin login, last-verified member). |
 | `SESSION_MAX_AGE_SECONDS` | `28800` (8 h) | Recommended | Session cookie lifetime. |
 | `SESSION_HTTPS_ONLY` | *(unset)* | Recommended | `true`/`false` to force the `Secure` flag. Unset means automatic: secure when `APP_ENV=production` **or** `PUBLIC_BASE_URL` starts with `https://`. |
@@ -318,16 +323,15 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
-| `ADMIN_EMAIL` | *(empty)* | **Yes** | Admin login address (compared case-insensitively). Empty **or** empty hash disables the whole admin UI. |
-| `ADMIN_PASSWORD_HASH` | *(empty)* | **Yes** | scrypt hash produced by `python -m app.cli hash-password` (format `scrypt$n$r$p$salt$hash`). Never a plain password. |
-| `ADMIN_SESSION_MAX_AGE_SECONDS` | `28800` (8 h) | Recommended | Admin session lifetime, independent of `SESSION_MAX_AGE_SECONDS`. |
+| `ADMIN_EMAIL` | *(empty)* | Recommended | Admin login address (compared case-insensitively). Empty **or** empty hash disables the whole admin UI. |
+| `ADMIN_PASSWORD_HASH` | *(empty)* | **Yes (guard) when the admin UI is enabled** | scrypt hash produced by `python -m app.cli hash-password` (format `scrypt$n$r$p$salt$hash`). Never a plain password. In production, a placeholder value is refused at startup **when `ADMIN_EMAIL` and this hash are both non-empty**; leaving either empty simply disables the admin UI instead. |
 
 ### 4.6 Email / verification
 
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
 | `VERIFICATION_TOKEN_TTL_HOURS` | `48` | Recommended | How long a verification link stays valid. |
-| `EMAIL_MODE` | `console` | **Yes** (`smtp`) | `console` prints the email to stdout (dev/CI); `smtp` really delivers it. |
+| `EMAIL_MODE` | `console` | **Yes (guard: must be `smtp`)** | `console` prints the email — **including the raw verification link** — to stdout (dev/CI by design); `smtp` really delivers it. Production refuses to start with `console`. |
 | `SMTP_HOST` | *(empty)* | **Yes (guard when `EMAIL_MODE=smtp`)** | SMTP relay hostname; empty makes email sending fail with `SMTP_HOST is not configured`. |
 | `SMTP_PORT` | `587` | **Yes** | Relay port (587 = submission + STARTTLS, 465 = implicit TLS, 25/1025 = local relay). |
 | `SMTP_USER` | *(empty)* | Recommended | Login user; empty skips `smtp.login()` (unauthenticated relay). |
@@ -341,9 +345,9 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
-| `REGISTER_RATE_LIMIT` | `10` | Recommended | Registrations allowed per IP hash per window (HTML **and** API register). |
+| `REGISTER_RATE_LIMIT` | `10` | Recommended | Registrations allowed per IP hash per window: `POST /register` (HTML) **and** `POST /api/v1/members/register`, which is limited by this `register` scope **and** the `api` scope below. |
 | `REGISTER_RATE_WINDOW_SECONDS` | `3600` | Recommended | Window for the above, in seconds. |
-| `API_RATE_LIMIT` | `60` | Recommended | `/api/v1/members*` calls per IP hash per window. |
+| `API_RATE_LIMIT` | `60` | Recommended | `/api/v1/members*` calls per IP hash per window (`api` scope). `POST /api/v1/members/register` also counts against `REGISTER_RATE_LIMIT`, and `resend-verification` additionally has a fixed per-member cap of **3 per hour** (`429` on the 4th), independent of this value. |
 | `API_RATE_WINDOW_SECONDS` | `60` | Recommended | Window for the above, in seconds. |
 | `LOGIN_RATE_LIMIT` | `10` | Recommended | Admin login attempts per IP hash per window (brute-force protection). |
 | `LOGIN_RATE_WINDOW_SECONDS` | `900` | Recommended | Window for the above, in seconds. |
@@ -355,7 +359,7 @@ configured value (§10).
 
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
-| `MEMBER_API_KEY` | *(empty)* | **Yes if the API is exposed** | When set, every `/api/v1/members*` request must send `X-API-Key` (constant-time compare) or receives `401`. `/health` and `/api/v1/health` are never protected. Empty leaves the member endpoints open. |
+| `MEMBER_API_KEY` | *(empty)* | **Yes (guard)** | **Mandatory in production** — the app refuses to start without a non-placeholder value of ≥ 16 characters, because `/api/v1/members*` can return member PII and trigger verification emails. When set, every `/api/v1/members*` request must send `X-API-Key` (constant-time compare) or receives `401`. `/health` and `/api/v1/health` are never protected. Empty outside production leaves the member endpoints open (local/dev only). |
 | `API_DOCS_ENABLED` | `true` | Recommended `false` | When `false`, FastAPI registers neither `/docs` nor `/openapi.json` (both return `404`). Set it to `false` in production, or keep it on and protect `/docs` at the reverse proxy. |
 | `CORS_ALLOW_ORIGINS` | *(empty)* | Recommended | Comma/semicolon separated browser origins allowed to call the API. Empty registers no CORS middleware (same-origin only). Credentials are never allowed. |
 
@@ -375,7 +379,7 @@ configured value (§10).
 |---|---|---|---|
 | `MEMBER_VERIFIED_WEBHOOK_URL` | *(empty)* | Only for webhook | Target URL. The webhook is **disabled** unless this **and** the secret are set. |
 | `MEMBER_VERIFIED_WEBHOOK_SECRET` | *(empty)* | Only for webhook | HMAC-SHA256 signing secret; also scrubbed from recorded error strings. |
-| `WEBHOOK_TIMEOUT_SECONDS` | `10` | Recommended | Per-attempt HTTP timeout. |
+| `WEBHOOK_TIMEOUT_SECONDS` | `5` | Recommended | Per-attempt HTTP timeout. Worst case for `GET /verify-email` is ≈ 3 × 5 s + backoff (1 s + 2 s) + the Meta call (10 s) ≈ 28 s, which is why the reverse proxy must allow ≥ 60 s (§10, [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §6). |
 | `WEBHOOK_MAX_ATTEMPTS` | `3` | Recommended | Total attempts before the delivery is marked `failed`. |
 | `WEBHOOK_BACKOFF_SECONDS` | `1.0` | Recommended | Base delay; the wait before attempt *n+1* is `backoff × 2^(n-1)` seconds (1 s, 2 s, 4 s …). |
 
@@ -485,6 +489,10 @@ The raw URL sits on its own line, so
 `grep -o 'http://localhost:8000/verify-email?token=[^ ]*'` gives you a clickable link immediately.
 The same block is what the test fixtures parse.
 
+This is a **local/dev/CI-only** backend by design: it prints the raw verification link (a
+credential) to stdout. Production cannot run it — the startup guard requires `EMAIL_MODE=smtp`
+(§12).
+
 ### 6.2 `EMAIL_MODE=smtp` (real delivery)
 
 ```dotenv
@@ -536,10 +544,15 @@ including warm-up advice and how to monitor `EMAIL_FAILED` events — is in
 ## 7. API
 
 * **Base path:** `/api/v1` (frozen — see the versioning note in [`docs/API.md`](docs/API.md)).
-* **Auth:** if `MEMBER_API_KEY` is set, every member endpoint requires the header
-  `X-API-Key: <key>` (constant-time comparison, `401` otherwise). `/health` and `/api/v1/health`
-  never require a key. Rate limits are keyed by the salted client IP hash (`API_RATE_LIMIT` per
-  `API_RATE_WINDOW_SECONDS`, default 60/60 s) and every response carries `X-Request-ID`.
+* **Auth:** `MEMBER_API_KEY` is **mandatory in production** (the app refuses to start without it)
+  because `/api/v1/members*` can return member PII and trigger verification emails; only `/health`
+  and `/api/v1/health` stay open. When it is set, every member endpoint requires the header
+  `X-API-Key: <key>` (constant-time comparison, `401` otherwise). Rate limits are keyed by the
+  salted client IP hash: `POST /api/v1/members/register` is limited by **both** the `register`
+  scope (`REGISTER_RATE_LIMIT`, default 10/3600 s) **and** the `api` scope (`API_RATE_LIMIT`,
+  default 60/60 s), every other `/api/v1/members*` call by the `api` scope, and
+  `resend-verification` additionally by a fixed per-member cap of 3 per hour. Every response
+  carries `X-Request-ID`.
 * **Envelope:** every `/api/v1` response — success *and* error — has the same four keys:
 
 ```json
@@ -711,8 +724,10 @@ curl -s -G http://localhost:8000/api/v1/members \
 ```
 
 Returns exactly the same payload as §7.2 (`MemberDetailOut`) for the normalised email, or
-`404 not_found` when no member matches. This is the idempotency helper for integrators: look the
-member up before registering.
+`404 not_found` when no member matches. An **invalid** address is a client error: `422
+validation_error` with `details = [{"field": "email", "message": "Email không hợp lệ"}]` (it used to
+escape as a `500`). This is the idempotency helper for integrators: look the member up before
+registering.
 
 ### 7.4 `POST /api/v1/members/{member_id}/resend-verification`
 
@@ -735,7 +750,9 @@ curl -s -X POST \
 
 For an already-verified member: `200` with
 `{"member_id": "…", "verification_sent": false, "error": "already_verified"}` — the call is not an
-error, it simply has nothing to do. Unknown id → `404 not_found`.
+error, it simply has nothing to do. Unknown id → `404 not_found`. On top of the `api` scope, one
+member can be re-mailed at most **3 times per hour**: the 4th call in the window is `429
+rate_limited` with `Retry-After`.
 
 ### 7.5 `GET /api/v1/health`
 
@@ -774,9 +791,9 @@ no secrets.
 | `401` | `unauthorized` | `X-API-Key` missing or wrong while `MEMBER_API_KEY` is set. |
 | `404` | `not_found` | Unknown/malformed member id, or email lookup miss. |
 | `405` | `method_not_allowed` | Wrong HTTP method on a known path. |
-| `413` | `payload_too_large` | Body over `MAX_REQUEST_BYTES`; emitted by middleware before routing (its envelope has an empty `meta`). |
-| `422` | `validation_error` | Pydantic body validation (missing/extra/oversized/blank field) or `NormalizationError` (bad email/phone). `error.details` is **always** a non-empty list of `{"field", "message"}`. Body validation: the top-level `message` is the generic `Dữ liệu gửi lên không hợp lệ.` and each detail carries Pydantic’s text. Normalisation failure: the top-level `message` **and** the single detail entry carry the Vietnamese reason (e.g. `Email không hợp lệ`), with `field` set to the machine name (`email`, `phone`, `utm`, `url`, `fbclid`, `body`). |
-| `429` | `rate_limited` | `API_RATE_LIMIT` (or `REGISTER_RATE_LIMIT` on register) exceeded; the response carries `Retry-After` in seconds (the HTML 429 page carries it too). |
+| `413` | `payload_too_large` | Body over `MAX_REQUEST_BYTES`; emitted by the middleware **before the handler runs** (its envelope has an empty `meta`) — the request is buffered, rejected and has **no side effects**: nothing is persisted. |
+| `422` | `validation_error` | Pydantic body validation (missing/extra/oversized/blank field), `NormalizationError` (bad email/phone), or `GET /api/v1/members?email=<invalid>` (`details: [{"field": "email", "message": "Email không hợp lệ"}]`) — the latter used to be a `500`. `error.details` is **always** a non-empty list of `{"field", "message"}`. Body validation: the top-level `message` is the generic `Dữ liệu gửi lên không hợp lệ.` and each detail carries Pydantic’s text. Normalisation failure: the top-level `message` **and** the single detail entry carry the Vietnamese reason (e.g. `Email không hợp lệ`), with `field` set to the machine name (`email`, `phone`, `utm`, `url`, `fbclid`, `body`). |
+| `429` | `rate_limited` | `API_RATE_LIMIT` exceeded on any `/api/v1/members*` call, `REGISTER_RATE_LIMIT` too on `register` (both scopes apply), or the per-member resend cap (3/hour) on `resend-verification`; the response carries `Retry-After` in seconds (the HTML 429 page carries it too). |
 | `500` | `internal_error` | Unhandled exception; the `request_id` in `meta` correlates with the server log line. |
 | *any other* | `request_failed` | Fallback for any other `HTTPException` raised by the framework. |
 
@@ -826,7 +843,10 @@ re-serialised JSON object.
   `WEBHOOK_BACKOFF_SECONDS × 2^(attempt-1)` seconds (default 1 s, then 2 s). The `X-Member-Delivery`
   UUID is stable across attempts — use it to de-duplicate. `X-Member-Signature` is recomputed with
   a fresh `X-Member-Timestamp` on every attempt, so check freshness against that header.
-* **Timeout:** `WEBHOOK_TIMEOUT_SECONDS` per attempt (default 10 s).
+* **Timeout:** `WEBHOOK_TIMEOUT_SECONDS` per attempt (default 5 s). Worst case on the verification
+  request: 3 attempts × 5 s + backoff 1 s + 2 s = 18 s for the webhook, plus the Meta call
+  (`META_TIMEOUT_SECONDS`, 10 s) ≈ **28 s**, so keep the reverse proxy’s `proxy_read_timeout` at
+  **≥ 60 s**.
 * **Never blocking:** delivery happens after commit; the result is recorded as `WEBHOOK_SENT` or
   `WEBHOOK_FAILED` (with `status`, `attempts`, `http_status`, `duration_ms`, `error`) and never
   affects the member’s verification.
@@ -968,18 +988,26 @@ monitoring) is in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**. The short vers
 
 * **Database:** PostgreSQL 16 with `DATABASE_URL=postgresql+psycopg://…`; SQLite is dev/CI only.
 * **Env vars:** start from `.env.example`, keep the file `chmod 600` and out of git.
-  `APP_ENV=production` plus a strong `SECRET_KEY` and `IP_HASH_SALT` are mandatory — the app refuses
-  to start otherwise (`SMTP_HOST` too when `EMAIL_MODE=smtp`). Set `PUBLIC_BASE_URL` to the public
-  `https://` origin.
+  `APP_ENV=production` turns on the strict startup guard: the app **refuses to start** unless
+  `SECRET_KEY` is a non-placeholder value of ≥ 32 chars, `IP_HASH_SALT` is non-placeholder and
+  ≥ 16 chars, `MEMBER_API_KEY` is non-empty, non-placeholder and ≥ 16 chars, `EMAIL_MODE=smtp`
+  with a non-empty `SMTP_HOST`, `DATABASE_URL` is not SQLite, `PUBLIC_BASE_URL` is non-empty and
+  starts with `https://`, and `ADMIN_PASSWORD_HASH` is not a placeholder whenever `ADMIN_EMAIL` is
+  also set. Every failing condition is listed in the traceback.
 * **Migrations:** `alembic upgrade head` once per release, before restarting the service; verify with
   `alembic current` (must print `0001_initial (head)`).
 * **Interactive docs:** set `API_DOCS_ENABLED=false` to stop registering `/docs` and
   `/openapi.json` (both then return `404`), or keep them enabled and protect `/docs` at the reverse
   proxy. The JSON API itself is never affected.
 * **Reverse proxy:** terminate TLS at nginx/Caddy/Traefik, bind uvicorn to `127.0.0.1`, and set
-  `TRUSTED_PROXY_HEADERS=true` **only** when every request genuinely arrives through that proxy
-  (otherwise `X-Forwarded-For` can be spoofed and IP rate limiting/hashing is defeated). Keep
-  `client_max_body_size` in sync with `MAX_REQUEST_BYTES`.
+  `TRUSTED_PROXY_HEADERS=true` **only** when *exactly one* trusted proxy sits in front and appends
+  the peer address (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`). The app reads
+  the **rightmost** `X-Forwarded-For` hop — the one that proxy appended — falling back to
+  `X-Real-IP`, then to the socket peer. Never enable it when clients can reach the app directly:
+  they could spoof the header and choose their own rate-limit bucket and `ip_hash`. Keep
+  `client_max_body_size` in sync with `MAX_REQUEST_BYTES`, and set `proxy_read_timeout` to **≥ 60 s**
+  because a verification request can take ≈ 28 s (3 × `WEBHOOK_TIMEOUT_SECONDS` (5 s) + backoff
+  1 s + 2 s + `META_TIMEOUT_SECONDS` (10 s)) before it answers.
 * **Multi-worker caveat:** the rate limiter is in-process. With `--workers N` the effective limit
   becomes up to `N ×` the configured value and restarts reset it — prefer `--workers 1`, or add a
   proxy-level `limit_req` as an outer guard. This affects `REGISTER_RATE_LIMIT`, `API_RATE_LIMIT`
@@ -1011,14 +1039,16 @@ python scripts/acceptance.py --skip-tests --port 8123      # other flags: --skip
 ```
 
 `tests/conftest.py` builds the environment *before* importing the app: a fresh temporary SQLite
-database per test, console email mode, rate limits raised to non-blocking values, and fixtures for
-the browser flow (`web.register_and_verify(...)`), a captured console mailbox
-(`mailbox.latest_token()`), an authenticated `admin_client`, a real local HTTP server that records
-webhook deliveries (`webhook_server`), a `closed_port` for connection-error paths and
-`settings_override` for env-var driven tests. Exporting **`TEST_DATABASE_URL`** makes the whole
+database per test, console email mode, rate limits raised to non-blocking values, and the fixtures
+`settings_env`, `client`, `web`, `mailbox`, `admin_client`, `db_session`, `database`,
+`webhook_server`, `closed_port` and `app_settings` — covering the browser flow
+(`web.register_and_verify(...)`), a captured console mailbox (`mailbox.latest_token()`), an
+authenticated `admin_client`, a real local HTTP server that records webhook deliveries, and a
+`closed_port` for connection-error paths. Exporting **`TEST_DATABASE_URL`** makes the whole
 suite run against that database instead of the per-test SQLite file — truncating the four tables
 between tests — which is exactly what the CI `postgres` job does (so “the tests pass on
-PostgreSQL” is reproducible on any machine, not just in CI).
+PostgreSQL” is reproducible on any machine, not just in CI). The suite is **157 tests**, green on
+SQLite and on PostgreSQL.
 
 What is covered today:
 
@@ -1032,7 +1062,15 @@ What is covered today:
 * **Registration flow** (`tests/test_register_flow.py`) — the HTML form end to end, CSRF handling,
   normalisation/validation errors, duplicate handling and the check-email redirect.
 * **Verification** (`tests/test_verification.py`) — one-time tokens (reuse rejected, expiry,
-  superseding), the atomic claim and the `already_verified` path.
+  superseding), the atomic claim and the `already_verified` path; the concurrent test is a **real
+  multi-thread race** (several threads released together through a `threading.Barrier`) that asserts
+  the conditional `UPDATE` lets exactly one claim win.
+* **Security-review regressions** (`tests/test_review_regressions.py`) — locks down the findings of
+  the security review: strict production guards (no API key / placeholder key refuses to boot),
+  rightmost-hop proxy trust and shared buckets when the proxy is untrusted, per-IP/per-member rate
+  limits, the preventive chunked/`Content-Length` body cap with no persisted side effects, hostile
+  pagination, SMTP error scrubbing, the two `/welcome` states, the removed admin session setting and
+  the 5 s webhook default.
 * **JSON API** (`tests/test_api.py`) — envelope shape, `X-API-Key` enforcement, 201-vs-200
   duplicate semantics, lookup, resend and the `validation_error` `details` list.
 * **Admin UI** (`tests/test_admin.py`) and **CSV export** (`tests/test_export_csv.py`) — login,
@@ -1103,11 +1141,17 @@ Implemented controls (all verifiable in the code):
   are consumed by an atomic conditional `UPDATE` (lost races get `used`).
 * **Hashed IPs only** — `SHA256(ip + IP_HASH_SALT)` for attribution and rate-limit keys; no raw IP
   in the database, in the webhook payload or in the Meta payload. `IP_HASH_SALT` is
-  guard-required in production.
+  guard-required in production. Proxy headers are honoured **only** under the single-proxy contract
+  of §4.4 (`TRUSTED_PROXY_HEADERS=true`): the app takes the rightmost `X-Forwarded-For` hop that the
+  trusted proxy appended, then `X-Real-IP`, then the socket peer — so in a deployment where clients
+  can send the header themselves, spoofing it cannot change their rate-limit bucket or `ip_hash`.
 * **Rate limiting** — registration (HTML + API), `/api/v1/members*` and admin login, each keyed by
-  the salted IP hash. Exceeding a limit returns `429` **on both branches** with a `Retry-After`
-  header in seconds (JSON API: envelope with `error.code = "rate_limited"`; HTML: the Vietnamese
-  error page). The in-process caveat for multi-worker deployments is documented in §10.
+  the salted IP hash. `POST /api/v1/members/register` is checked against **both** the `register`
+  scope (`REGISTER_RATE_LIMIT`) and the `api` scope (`API_RATE_LIMIT`), and `resend-verification`
+  also carries a fixed per-member cap of 3 per hour. Exceeding a limit returns `429` **on both
+  branches** with a `Retry-After` header in seconds (JSON API: envelope with
+  `error.code = "rate_limited"`; HTML: the Vietnamese error page). The in-process caveat for
+  multi-worker deployments is documented in §10.
 * **Security headers + per-request CSP** — every response carries `X-Content-Type-Options`,
   `X-Frame-Options: DENY`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy` and
   HSTS when cookies are secure. The `Content-Security-Policy` is generated per request with a fresh
@@ -1115,17 +1159,24 @@ Implemented controls (all verifiable in the code):
   `csp_nonce`) so the inline brand-colour style and the optional GA4/Meta bootstrap run without ever
   enabling `unsafe-inline`; `default-src 'self'`, `object-src 'none'` and `frame-ancestors 'none'`
   stay in force, and third-party hosts are allow-listed only when their id is configured.
-* **Verification tokens are redacted from logs** — `RedactTokensFilter` in `app/main.py` rewrites
-  `token=<value>` to `token=***` on the root, `uvicorn` and `uvicorn.access` loggers, so a one-time
-  token never lands in journald/CI output even though it travels in the query string.
+* **Verification tokens and logs** — `RedactTokensFilter` in `app/main.py` rewrites `token=<value>`
+  to `token=***` on the root, `uvicorn` and `uvicorn.access` loggers, so a one-time token does not
+  land in journald/CI output even though it travels in the query string. In production
+  (`EMAIL_MODE=smtp`) verification tokens are never written to logs; the local console backend
+  **deliberately prints the raw verification link to stdout** (that is how the dev harness and the
+  tests read it), and production refuses to start with it.
 * **CSV formula-injection guard** — exported cells starting with `=`, `+`, `-`, `@`, TAB, CR or LF
   are prefixed with `'`; booleans/dates are normalised, URLs truncated, and the file carries a UTF-8
   BOM. The export is `Cache-Control: no-store` and records an `EXPORT` audit event.
-* **Request size cap** — `MaxBodySizeMiddleware` rejects bodies over `MAX_REQUEST_BYTES` (256 KiB
-  default) with `413` before routing, checking both `Content-Length` and the streamed size.
-* **Optional API key auth** — `X-API-Key` compared with `hmac.compare_digest`; enforced only when
-  `MEMBER_API_KEY` is set, so the endpoints are never silently unauthenticated on a deployment that
-  expects auth.
+* **Request size cap (preventive)** — `MaxBodySizeMiddleware` buffers the body and rejects anything
+  over `MAX_REQUEST_BYTES` (256 KiB default) with `413` **before the handler ever runs**, using the
+  fast `Content-Length` check plus the streamed byte count so a chunked body without
+  `Content-Length` is caught too. A rejected request has **no side effects**: nothing is persisted.
+* **API key auth** — `X-API-Key` compared with `hmac.compare_digest`. `MEMBER_API_KEY` is
+  **mandatory in production** (the startup guard rejects an empty, placeholder or < 16-char value)
+  because `/api/v1/members*` can return member PII and trigger verification emails; only `/health`
+  and `/api/v1/health` stay open. Outside production, an empty key leaves the member endpoints open
+  (documented, deliberate for local/dev).
 * **No secrets in git** — `.gitignore` excludes `.env`/`.env.*` (keeping `.env.example`), `*.db`,
   caches and virtualenvs. `.env.example` contains only placeholders and documents how to generate
   real values. Logs mask secrets: the Meta access token and the webhook secret are scrubbed from

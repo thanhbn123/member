@@ -53,8 +53,8 @@ the request, so a support report can be correlated with logs.
 
 | Surface | Auth |
 |---|---|
-| `/api/v1/members*` | Optional shared key. **When `MEMBER_API_KEY` is set**, the header `X-API-Key: <key>` is mandatory; comparison is constant-time (`hmac.compare_digest`). Missing or wrong → `401 unauthorized`. When `MEMBER_API_KEY` is empty the endpoints are open (documented, deliberate for local/dev). |
-| `/api/v1/health`, `/health` | Never authenticated. |
+| `/api/v1/members*` | Shared key, **mandatory in production**: the startup guard refuses to boot when `MEMBER_API_KEY` is empty, a placeholder or shorter than 16 characters, because these endpoints can return member PII and trigger verification emails. When `MEMBER_API_KEY` is set, the header `X-API-Key: <key>` is mandatory; comparison is constant-time (`hmac.compare_digest`). Missing or wrong → `401 unauthorized`. Outside production an empty key leaves the endpoints open (documented, deliberate for local/dev). |
+| `/api/v1/health`, `/health` | Never authenticated — the only open `/api/v1` and probe surfaces. |
 | `/api/v1/*` CSRF | Not applicable — JSON API endpoints are exempt from CSRF by design (`CSRF_EXEMPT_PREFIXES = ("/api/",)`); they are not cookie-authenticated. |
 | `/admin/*` | Session cookie set by `POST /admin/login`; every other admin route redirects anonymous browsers (HTTP `303`) to `<PUBLIC_BASE_URL>/admin/login`. Requires `ADMIN_EMAIL` **and** `ADMIN_PASSWORD_HASH`. |
 | HTML `POST` (`/register`, `/admin/login`, `/admin/logout`) | Double-submit CSRF token: form field `csrf_token` must match the `member_csrf` cookie. Missing/mismatched → `403`. |
@@ -72,9 +72,12 @@ separated):
 ### 0.4 Request body size
 
 Bodies larger than `MAX_REQUEST_BYTES` (default `262144` = 256 KiB) are rejected with
-`413 payload_too_large` by `MaxBodySizeMiddleware` **before** routing. The check uses both the
-`Content-Length` header and the actual streamed byte count. Note that the `413` envelope is
-produced by the middleware and therefore has `"meta": {}` (no `request_id`).
+`413 payload_too_large` by `MaxBodySizeMiddleware`. The check is **preventive**: the middleware
+buffers the body and answers `413` itself, so the handler never runs. It uses the `Content-Length`
+header as a fast path *and* counts the streamed bytes, so a **chunked body with no `Content-Length`
+is caught too**. A rejected request has **no side effects** — nothing is parsed and nothing is
+persisted. The `413` envelope is produced by the middleware and therefore has `"meta": {}` (no
+`request_id`).
 
 ### 0.5 Rate limiting
 
@@ -85,13 +88,25 @@ Counters are in-process (per worker). Keys are `<scope>:sha256(client_ip + IP_HA
 | `register` | `REGISTER_RATE_LIMIT` / `REGISTER_RATE_WINDOW_SECONDS` | 10 / 3600 s | `POST /register` (HTML) **and** `POST /api/v1/members/register` |
 | `api` | `API_RATE_LIMIT` / `API_RATE_WINDOW_SECONDS` | 60 / 60 s | `GET/POST /api/v1/members*` |
 | `login` | `LOGIN_RATE_LIMIT` / `LOGIN_RATE_WINDOW_SECONDS` | 10 / 900 s | `POST /admin/login` |
+| `resend:<member_id>` | *(fixed, not configurable)* | 3 / 3600 s | `POST /api/v1/members/{id}/resend-verification` — per **member**, on top of the `api` scope |
+
+`POST /api/v1/members/register` is checked against **both** the `register` scope and the `api`
+scope: it is enough for either to be exhausted to get a `429`. `resend-verification` is checked
+against the `api` scope **and** the per-member cap (the 4th call for the same member within an hour
+is `429`), so one member cannot be mail-bombed even from many IPs.
 
 On `429`, **both branches** carry a `Retry-After` header (seconds until the window frees up): the
 JSON API returns the envelope with `error.code = "rate_limited"`, the HTML surface returns the
 Vietnamese error page. Verified: `POST /register` over the limit → `429` + `retry-after: 3600`;
 `GET /api/v1/members` over the limit → `429` + `retry-after: 60`.
 
-`X-Forwarded-For` / `X-Real-IP` are honoured **only** when `TRUSTED_PROXY_HEADERS=true`.
+`X-Forwarded-For` / `X-Real-IP` are honoured **only** when `TRUSTED_PROXY_HEADERS=true`, and that
+setting means exactly **one** trusted reverse proxy in front which *appends* the peer address
+(`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`). The app takes the **rightmost**
+`X-Forwarded-For` hop — the value the trusted proxy appended — and ignores everything to its left
+(supplied by the client); it falls back to `X-Real-IP`, then to the socket peer. Never enable it
+when the app is directly reachable by clients: the caller would then control its own rate-limit
+bucket and `ip_hash`.
 
 ### 0.6 Idempotency summary
 
@@ -135,7 +150,8 @@ Vietnamese error page. Verified: `POST /register` over the limit → `429` + `re
 | `GET` | `/admin/members.csv` | admin | session | `200` `text/csv` |
 | `GET` | `/admin/members/{member_id}` | admin | session | `200` (or `404` page) |
 
-\* required only when `MEMBER_API_KEY` is set.
+\* required when `MEMBER_API_KEY` is set, and `MEMBER_API_KEY` is **mandatory in production** (the
+app refuses to start otherwise — §0.2).
 
 ---
 
@@ -212,8 +228,9 @@ curl -s http://localhost:8000/api/v1/health
 
 ## 3. JSON API — members
 
-All four member endpoints share the same rate limit (`API_RATE_LIMIT`) and the same optional
-`X-API-Key` requirement.
+All four member endpoints share the same `X-API-Key` requirement (mandatory in production) and are
+subject to the `api` rate limit (`API_RATE_LIMIT`); `register` is additionally subject to
+`REGISTER_RATE_LIMIT` and `resend-verification` to a per-member cap of 3/hour (§0.5).
 
 ### 3.1 `POST /api/v1/members/register`
 
@@ -229,7 +246,7 @@ Registers a member (creating a `pending` record) and sends the verification emai
 | `401 Unauthorized` | `MEMBER_API_KEY` set and `X-API-Key` missing/wrong. |
 | `413 Payload Too Large` | Body larger than `MAX_REQUEST_BYTES`. |
 | `422 Unprocessable Entity` | Body validation failed (missing/extra/oversized/blank field) or server-side normalisation failed (invalid email/phone). `error.details` is always a non-empty list. |
-| `429 Too Many Requests` | `REGISTER_RATE_LIMIT` (or `API_RATE_LIMIT`) exceeded; `Retry-After` header set. |
+| `429 Too Many Requests` | Either scope exceeded — `REGISTER_RATE_LIMIT` **and** `API_RATE_LIMIT` both apply here; `Retry-After` header set. |
 | `500 Internal Server Error` | Unhandled error; `internal_error`. |
 
 **Body parameters** (`application/json`, `extra="forbid"`, strings are stripped of surrounding
@@ -499,8 +516,8 @@ The idempotency helper: resolve a member from the natural unique key instead of 
 |---|---|---|---|---|
 | `email` | query | string | **yes** | Normalised (lower-cased) before the lookup, so any casing works. |
 
-**Status codes:** `200`, `401`, `404` (no match), `422` (missing `email` query parameter), `429`,
-`500`.
+**Status codes:** `200`, `401`, `404` (no match), `422` (missing `email` query parameter, **or an
+invalid address**), `429`, `500`.
 
 ```bash
 curl -s -G http://localhost:8000/api/v1/members \
@@ -511,6 +528,22 @@ curl -s -G http://localhost:8000/api/v1/members \
 **`200 OK`** — identical body to §3.2 (`MemberDetailOut`, including `attribution`).
 
 **`404 Not Found`** — same envelope as §3.2 with `not_found`.
+
+**`422 Unprocessable Entity` — invalid address.** A malformed `email` is a client error (it used to
+escape the normaliser as a `500`):
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "validation_error",
+    "message": "Email không hợp lệ",
+    "details": [{"field": "email", "message": "Email không hợp lệ"}]
+  },
+  "meta": {"request_id": "…"}
+}
+```
 
 > `GET /api/v1/members` without the `email` parameter is a `422 validation_error`, not a list
 > endpoint. There is no public paginated member list — use the admin CSV (§5.3) for bulk exports.
@@ -525,7 +558,9 @@ email. No request body.
 | `member_id` | path | UUID string | **yes** | Unknown or malformed → `404`. |
 
 **Status codes:** `200`, `401`, `404`, `429`, `500`. `200` is returned even when nothing was sent —
-inspect `data.verification_sent` / `data.error`.
+inspect `data.verification_sent` / `data.error`. The `429` is returned either by the per-IP `api`
+scope or, **on the 4th call within an hour for the same member**, by the fixed per-member cap of
+3/hour (`scope = resend:<member_id>`); `Retry-After` is set in both cases.
 
 ```bash
 curl -s -X POST \
@@ -580,9 +615,9 @@ not happen:
 | `401` | `unauthorized` | `API key không hợp lệ hoặc thiếu header X-API-Key.` | `require_api_key` when `MEMBER_API_KEY` is set and the header is missing/wrong. | — |
 | `404` | `not_found` | `Member không tồn tại.` | Unknown/malformed UUID, or email lookup miss. | — |
 | `405` | `method_not_allowed` | `Method Not Allowed` | Wrong method on a known path. | — |
-| `413` | `payload_too_large` | `Request body exceeds <MAX_REQUEST_BYTES> bytes` | Body over the cap (middleware; `meta` is `{}`). | — |
-| `422` | `validation_error` | `Dữ liệu gửi lên không hợp lệ.` (schema) / the Vietnamese reason (normalisation) | Pydantic body validation or `NormalizationError`. `details` is **always** a non-empty `[{"field", "message"}]` list. | — |
-| `429` | `rate_limited` | `Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.` | Rate limit exceeded (`REGISTER_RATE_LIMIT`, `API_RATE_LIMIT`). | yes |
+| `413` | `payload_too_large` | `Request body exceeds <MAX_REQUEST_BYTES> bytes` | Body over the cap. Preventive: the middleware buffers and rejects it before the handler runs (chunked bodies included, no `Content-Length` needed), with no side effects; `meta` is `{}`. | — |
+| `422` | `validation_error` | `Dữ liệu gửi lên không hợp lệ.` (schema) / the Vietnamese reason (normalisation) | Pydantic body validation, a `NormalizationError` (bad email/phone), or an invalid `email` on `GET /api/v1/members` (`email` lookup), which previously returned `500`. `details` is **always** a non-empty `[{"field", "message"}]` list. | — |
+| `429` | `rate_limited` | `Bạn đã gửi quá nhiều yêu cầu. Vui lòng thử lại sau.` | Rate limit exceeded: `API_RATE_LIMIT`, `REGISTER_RATE_LIMIT` (register takes both scopes) or the per-member resend cap of 3/hour. | yes |
 | `500` | `internal_error` | `Đã xảy ra lỗi hệ thống.` | Unhandled exception. | — |
 | *other* | `request_failed` | *(framework detail)* | Any other `HTTPException` (e.g. `403` raised outside the HTML path). | — |
 
@@ -669,8 +704,13 @@ rolled back or blocked by email/webhook/Meta failures.
 
 ### 4.6 `GET /welcome` → `200`
 
-Welcome page for the member verified in this browser session (`session["last_member_id"]`); renders
-without a member when the session has none.
+Two states, driven by the session (written by a successful `/verify-email`, key
+`session["last_member_id"]`):
+
+| Session | Rendered |
+|---|---|
+| a member whose `status = verified` | congratulates that member (masked email) |
+| no member, or a member that is still `pending` | the neutral **“Email chưa được xác minh”** state with the resend / check-email links — the page claims nothing about membership |
 
 ### 4.7 `GET /robots.txt` → `200` `text/plain`
 
@@ -835,7 +875,10 @@ These are not endpoints of this service but are part of its contract with other 
 
 Body and verification snippet: README §8 and `docs/INTEGRATION.md` §4. Retries:
 `WEBHOOK_MAX_ATTEMPTS` (3) with backoff `WEBHOOK_BACKOFF_SECONDS × 2^(attempt-1)`, timeout
-`WEBHOOK_TIMEOUT_SECONDS` per attempt. A receiver must return 2xx quickly.
+`WEBHOOK_TIMEOUT_SECONDS` per attempt (default **5 s**). Worst case on `GET /verify-email`:
+3 × 5 s + backoff (1 s + 2 s) = 18 s for the webhook, plus the Meta call
+(`META_TIMEOUT_SECONDS`, 10 s) ≈ 28 s — allow `proxy_read_timeout` ≥ 60 s in front of the app.
+A receiver must return 2xx quickly.
 
 ### 6.2 Meta Conversions API
 

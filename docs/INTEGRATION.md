@@ -106,7 +106,7 @@ Configure on the MEMBER deployment:
 ```dotenv
 MEMBER_VERIFIED_WEBHOOK_URL=https://api.viporder.vn/hooks/member-verified
 MEMBER_VERIFIED_WEBHOOK_SECRET=<48+ random bytes, shared with VIPORDER only>
-WEBHOOK_TIMEOUT_SECONDS=10
+WEBHOOK_TIMEOUT_SECONDS=5
 WEBHOOK_MAX_ATTEMPTS=3
 WEBHOOK_BACKOFF_SECONDS=1.0
 ```

@@ -50,29 +50,32 @@ SQL
 Start from `.env.example` (it documents every setting). In production the file must be
 readable only by the service user, **never** committed.
 
-**Required in production** (`APP_ENV=production` makes the app refuse to start otherwise):
+**Required in production** — `APP_ENV=production` makes the app **refuse to start** unless *all* of
+these hold (the traceback lists every failing condition):
 
-| Variable | Notes |
+| Variable | Requirement enforced at startup |
 |---|---|
-| `APP_ENV` | `production` (enables strict config guards + secure cookies) |
-| `SECRET_KEY` | long random value; signs sessions/CSRF. Rotating it logs everybody out |
-| `IP_HASH_SALT` | salt for IP hashing; raw IPs are never stored |
-| `DATABASE_URL` | `postgresql+psycopg://…` (see above) |
-| `PUBLIC_BASE_URL` | public `https://` origin, no trailing slash — used in verification links |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | scrypt hash; both empty ⇒ admin UI disabled |
-| `EMAIL_MODE` | `smtp` in production; `console` only for dev/CI |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` | required when `EMAIL_MODE=smtp` |
+| `APP_ENV` | `production` (turns on the strict guard + secure cookies) |
+| `SECRET_KEY` | non-placeholder and **≥ 32 characters**; signs sessions/CSRF. Rotating it logs everybody out |
+| `IP_HASH_SALT` | non-placeholder and **≥ 16 characters**; salt for IP hashing (raw IPs are never stored) |
+| `MEMBER_API_KEY` | non-empty, non-placeholder and **≥ 16 characters**; protects member PII on `/api/v1/members*` (§6) |
+| `EMAIL_MODE` | exactly `smtp` — `console` is refused (it prints raw verification links) |
+| `SMTP_HOST` | non-empty when `EMAIL_MODE=smtp` |
+| `DATABASE_URL` | must **not** be SQLite: `postgresql+psycopg://…` (see above) |
+| `PUBLIC_BASE_URL` | non-empty and starting with **`https://`** — used in verification links and cookies |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | optional pair, but when the admin UI is enabled (both non-empty) the hash must **not** be a placeholder; leaving either empty disables the admin UI instead of blocking startup |
 
-**Strongly recommended:** `BRAND_*`, `SMTP_USER`/`SMTP_PASSWORD`/`SMTP_TLS`,
-`TRUSTED_PROXY_HEADERS=true` (only behind a trusted proxy), `SECURITY_HEADERS_ENABLED=true`,
-`CSRF_ENABLED=true`, a non-empty `MEMBER_API_KEY` if the JSON API is exposed,
-`GA4_MEASUREMENT_ID`, `META_*`, `MEMBER_VERIFIED_WEBHOOK_*`.
+**Strongly recommended:** `BRAND_*`, `SMTP_USER`/`SMTP_PASSWORD`/`SMTP_TLS`/`SMTP_PORT`/`SMTP_FROM`,
+`TRUSTED_PROXY_HEADERS=true` (only behind exactly one trusted proxy — §6),
+`SECURITY_HEADERS_ENABLED=true`, `CSRF_ENABLED=true`, `GA4_MEASUREMENT_ID`, `META_*`,
+`MEMBER_VERIFIED_WEBHOOK_*`.
 
 Generating values:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(64))"                       # SECRET_KEY
 python -c "import secrets; print(secrets.token_urlsafe(32))"                       # IP_HASH_SALT
+python -c "import secrets; print(secrets.token_urlsafe(32))"                       # MEMBER_API_KEY
 python -c "from app.security import hash_password; print(hash_password('…'))"      # ADMIN_PASSWORD_HASH
 ```
 
@@ -154,7 +157,9 @@ journalctl -u member -f
   other setting must be identical, otherwise signed sessions break intermittently.
 * `--forwarded-allow-ips 127.0.0.1` plus the app setting `TRUSTED_PROXY_HEADERS=true` is what
   makes the real client IP visible; only do this when the app is reachable **exclusively**
-  through the proxy (loopback bind + firewall — see §6).
+  through the proxy (loopback bind + firewall — see §6). The app takes the rightmost
+  `X-Forwarded-For` hop (the one the proxy appended with `$proxy_add_x_forwarded_for`), falls back
+  to `X-Real-IP`, then to the socket peer.
 
 ## 6. Reverse proxy and TLS
 
@@ -176,9 +181,15 @@ server {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
+        # $proxy_add_x_forwarded_for APPENDS $remote_addr to any client-supplied
+        # header: the rightmost hop is therefore the only trustworthy one.
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 30s;
+        # A verification request can block for ~28 s before it answers:
+        # 3 webhook attempts x WEBHOOK_TIMEOUT_SECONDS (5 s) + backoff (1 s + 2 s)
+        # + the Meta call (META_TIMEOUT_SECONDS, 10 s). Keep this >= 60 s so the
+        # proxy never cuts a slow-but-successful verification with a 504.
+        proxy_read_timeout 60s;
     }
 }
 server { listen 80; server_name members.example.com; return 301 https://$host$request_uri; }
@@ -187,9 +198,15 @@ server { listen 80; server_name members.example.com; return 301 https://$host$re
 * TLS is mandatory in production: the verification link, session cookie and CSRF cookie must
   never travel in clear text. `SESSION_HTTPS_ONLY` defaults to `true` in production, and the
   app sets security headers (CSP etc.) — keep `SECURITY_HEADERS_ENABLED=true`.
-* `TRUSTED_PROXY_HEADERS=true` is correct **only** when every request arrives through this
-  trusted proxy; if the app can be reached directly, leave it `false` so clients cannot spoof
-  `X-Forwarded-For` (which would defeat IP-based rate limiting and IP hashing).
+* `TRUSTED_PROXY_HEADERS=true` is correct **only** under this exact contract: *exactly one* trusted
+  reverse proxy in front, and that proxy **appends** the peer address
+  (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`). The app then uses the
+  **rightmost** `X-Forwarded-For` hop — the value this proxy appended — and ignores everything to
+  its left (client-supplied); it falls back to `X-Real-IP`, then to the socket peer. If the app can
+  be reached directly, leave it `false`: a client would otherwise choose its own rate-limit bucket
+  and `ip_hash`, defeating IP-based rate limiting.
+* Keep `client_max_body_size` in sync with `MAX_REQUEST_BYTES` (the `413` is preventive: the body is
+  buffered and rejected before any handler runs, with no side effects).
 * Set `PUBLIC_BASE_URL=https://members.example.com` so emails contain the public URL.
 
 ## 7. Multi-worker caveats
@@ -202,13 +219,17 @@ restart resets the counters. Mitigations, in order of preference:
 2. add a reverse-proxy limit (`limit_req_zone` / `limit_req` in nginx) as a coarse outer guard;
 3. use a shared store (Redis) behind the same interface when the project grows.
 
-This affects `REGISTER_RATE_LIMIT`, `API_RATE_LIMIT` and `LOGIN_RATE_LIMIT` alike — the admin
-login limit is a brute-force protection, so do not multiply it by the worker count.
+This affects `REGISTER_RATE_LIMIT`, `API_RATE_LIMIT` and `LOGIN_RATE_LIMIT` alike — as well as the
+fixed per-member resend cap (3 verification emails/hour) — the admin login limit is a brute-force
+protection, so do not multiply it by the worker count.
 
-**Console email mode.** `EMAIL_MODE=console` only prints `[EMAIL][console] …` blocks to the
-stdout of whichever worker handled the request: no email is delivered, and with several
-workers the output is interleaved in the journal. It is intended for local development, tests
-and CI. Production must use `EMAIL_MODE=smtp` with a working relay.
+**Console email mode** is impossible in production: the startup guard requires `EMAIL_MODE=smtp`,
+precisely because the console backend **prints the raw verification link to stdout by design**
+(that is how the local harness and the tests read it). `EMAIL_MODE=console` therefore only prints
+`[EMAIL][console] …` blocks to the stdout of whichever worker handled the request in local
+development, tests and CI: no email is delivered and with several workers the output is interleaved
+in the journal. Production must use `EMAIL_MODE=smtp` with a working relay — and it refuses to boot
+otherwise.
 
 ## 8. Email deliverability (SPF / DKIM / DMARC)
 
@@ -257,7 +278,10 @@ Verification emails are transactional; landing in spam breaks the whole registra
   minutes of `journalctl -u member`; `uvicorn` startup errors (bad config, unreachable DB) are
   fatal by design, especially with `APP_ENV=production` config guards.
 * Never log secrets, raw IPs or token values — the code only stores hashed IPs and hashed
-  verification tokens; keep it that way in any custom logging you add.
+  verification tokens. In production (`EMAIL_MODE=smtp`) verification tokens are never written to
+  logs; the local console backend prints the raw verification link by design and production refuses
+  to start with it, so a deployment can never leak tokens through stdout. Keep it that way in any
+  custom logging you add.
 
 ## 11. Rollback
 
