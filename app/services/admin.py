@@ -13,7 +13,6 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlparse
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -250,9 +249,3 @@ def iter_csv(members: Iterable[Member]) -> Iterator[str]:
 def export_filename(now: datetime | None = None) -> str:
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%d-%H%M%S")
     return f"members-{stamp}.csv"
-
-
-def _host_of(url: str | None) -> str | None:  # pragma: no cover - helper kept for callers
-    if not url:
-        return None
-    return urlparse(url).hostname

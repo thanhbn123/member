@@ -60,12 +60,6 @@ class RegisterRequest(BaseModel):
     source: str | None = Field(default=None, max_length=50)
 
 
-class ResendVerificationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    pass
-
-
 # --------------------------------------------------------------------------- responses
 class AttributionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -100,10 +94,3 @@ class MemberOut(BaseModel):
 
 class MemberDetailOut(MemberOut):
     attribution: AttributionOut | None = None
-
-
-class RegisterResultOut(BaseModel):
-    member: MemberOut
-    verification_sent: bool
-    duplicate: bool
-    message: str

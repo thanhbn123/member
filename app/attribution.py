@@ -13,8 +13,6 @@ from app.normalize import normalize_fbclid, normalize_url, normalize_utm
 from app.security import client_ip, hash_ip
 from app.services.members import AttributionInput
 
-UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term")
-
 
 def _first(*values: Any) -> str | None:
     for value in values:
