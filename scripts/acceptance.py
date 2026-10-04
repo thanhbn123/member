@@ -382,6 +382,10 @@ def main() -> int:
     return 1 if failed else 0
 
 
+PEM_HEADER = "-----BEGIN "
+PEM_KEY_MARKERS = ("PRIVATE" + " KEY", "OPENSSH" + " " + "PRIVATE" + " KEY")
+
+
 def secret_scan() -> list[str]:
     """Scan the *tracked* files for credentials and verify .env is not committed."""
     problems: list[str] = []
@@ -414,7 +418,8 @@ def secret_scan() -> list[str]:
                 problems.append(f"{label} found in {relative}")
         if re.search(r"SMTP_PASSWORD\s*=\s*[^\s#\"']+", text) and relative != ".env.example":
             problems.append(f"SMTP_PASSWORD value found in {relative}")
-        if "-----BEGIN" in text and "PRIVATE KEY" in text:
+        # Assembled at runtime so this scanner does not flag its own source file.
+        if PEM_HEADER in text and any(marker in text for marker in PEM_KEY_MARKERS):
             problems.append(f"private key material in {relative}")
     return problems
 
