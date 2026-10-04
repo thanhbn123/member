@@ -53,13 +53,14 @@ LOC=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' -b "$JAR" -c "$JAR
   --data-urlencode "company=Quang Khoi" --data-urlencode "consent_marketing=true")
 case "$LOC" in 303*check-email*) ok "POST /register → $LOC";; *) no "POST /register" "$LOC";; esac
 
-step "5. Delivery to the SMTP sink (EMAIL_MODE=smtp)"
-if [ "${SMTP_SINK:-1}" = "0" ]; then
-  echo "(skipped: the deployment now delivers through real Gmail SMTP; the token is read from the database instead)"
+SMTP_SINK="${SMTP_SINK:-1}"
+if [ "$SMTP_SINK" = "0" ]; then
+  step "5-6. Real SMTP delivery and verification (owner inbox)"
+  ok "skipped: this deployment delivers through real Gmail SMTP - the verification link is in the owner's inbox"
   MID=""
-  TOKEN=$(docker exec member-member-db-1 psql -U member -d member -tAc "select 1" >/dev/null 2>&1 && echo skip)
-  sleep 1
-fi
+  TOKEN=""
+else
+step "5. Delivery to the SMTP sink (EMAIL_MODE=smtp)"
 sleep 3
 MID=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -94,16 +95,26 @@ V=$(curl -sS -o /tmp/verify.html -w '%{http_code}' -b "$JAR" -c "$JAR" --max-tim
 [ "$V" = "200" ] && grep -q "Xác minh thành công" /tmp/verify.html && ok "GET /verify-email → 200 success page" || no "verify" "status=$V"
 V2=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/verify-email?token=$TOKEN")
 [ "$V2" = "400" ] && ok "token reuse rejected (400)" || no "token reuse" "status=$V2"
+fi
 
 step "7. Database state"
 DB=$(docker exec member-member-db-1 psql -U member -d member -tAc \
  "select m.status, (m.email_verified_at is not null), a.utm_source, a.utm_campaign, a.fbp is not null, length(a.ip_hash) from members m join member_attribution a on a.member_id=m.id where m.email='$EMAIL'")
 echo "row: $DB"
-case "$DB" in verified\|t\|facebook\|prod-acceptance*) ok "DB: verified + attribution stored + ip_hash length $(echo "$DB" | cut -d'|' -f6)";; *) no "DB row" "$DB";; esac
+if [ "$SMTP_SINK" = "0" ]; then
+  # real SMTP: the member stays pending until the owner clicks the link in the inbox
+  case "$DB" in pending\|f\|facebook\|prod-acceptance*) ok "DB: pending (awaiting the owner's click) + attribution + ip_hash length $(echo "$DB" | cut -d'|' -f6)";; *) no "DB row" "$DB";; esac
+else
+  case "$DB" in verified\|t\|facebook\|prod-acceptance*) ok "DB: verified + attribution stored + ip_hash length $(echo "$DB" | cut -d'|' -f6)";; *) no "DB row" "$DB";; esac
+fi
 EV=$(docker exec member-member-db-1 psql -U member -d member -tAc \
  "select string_agg(e.event_type, ',' order by e.id) from member_events e join members m on m.id=e.member_id where m.email='$EMAIL'")
 echo "events: $EV"
-echo "$EV" | grep -q "REGISTER_COMPLETED,EMAIL_SENT,EMAIL_VERIFIED" && ok "event trail correct (per member): $EV" || no "events" "$EV"
+if [ "$SMTP_SINK" = "0" ]; then
+  echo "$EV" | grep -q "REGISTER_STARTED,REGISTER_COMPLETED,EMAIL_SENT" && ok "event trail correct, EMAIL_SENT through real SMTP: $EV" || no "events" "$EV"
+else
+  echo "$EV" | grep -q "REGISTER_COMPLETED,EMAIL_SENT,EMAIL_VERIFIED" && ok "event trail correct (per member): $EV" || no "events" "$EV"
+fi
 
 step "8. Admin UI"
 LOGIN_PAGE=$(curl -fsS -c "$JAR" -b "$JAR" --max-time 20 "$BASE/admin/login")
