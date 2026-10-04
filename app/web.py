@@ -64,7 +64,15 @@ def base_context(request: Request) -> dict[str, Any]:
     }
 
 
-def render(request: Request, name: str, status_code: int = 200, **extra: Any):
+def render(
+    request: Request,
+    name: str,
+    status_code: int = 200,
+    headers: dict[str, str] | None = None,
+    **extra: Any,
+):
     context = base_context(request)
     context.update(extra)
-    return templates.TemplateResponse(request, name, context, status_code=status_code)
+    return templates.TemplateResponse(
+        request, name, context, status_code=status_code, headers=headers
+    )

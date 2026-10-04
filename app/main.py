@@ -226,7 +226,12 @@ def _register_exception_handlers(app: FastAPI) -> None:
         title, message = _client_detail(exc.status_code)
         message = str(exc.detail) if exc.detail and exc.status_code in {403, 429} else message
         return render(
-            request, "error.html", status_code=exc.status_code, title=title, message=message
+            request,
+            "error.html",
+            status_code=exc.status_code,
+            headers=exc.headers,
+            title=title,
+            message=message,
         )
 
     @app.exception_handler(Exception)

@@ -10,10 +10,15 @@ purely through environment variables — no customer name, colour, logo, domain 
 hard-coded anywhere in `app/` — so one deployment can serve exactly one brand and be cloned per
 tenant.
 
-**Status: MVP, local acceptance passed.** Everything documented here was verified against a local
-SQLite database on this machine. **This milestone is local-only: nothing is deployed to a VPS** —
-no server, domain, systemd unit or production database exists yet. Read
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the recipe to follow *when* a deployment is requested.
+**Status: MVP, local acceptance passed.** `python scripts/acceptance.py` runs the 15-step harness
+(migrations → real uvicorn server → the full HTTP registration/verification/admin/API flow →
+`pytest` → secret scan) and reports `LOCAL ACCEPTANCE: 15/15 steps passed` on a local SQLite
+database, and the same 15 steps pass with `--database-url postgresql+psycopg://…` against a real
+PostgreSQL 16 instance (the whole pytest suite also passes with
+`TEST_DATABASE_URL=postgresql+psycopg://…`, 128 tests on both engines). **This milestone is
+local-only: nothing is deployed to a VPS** — no server, domain, systemd unit or production
+database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the recipe to follow
+*when* a deployment is requested.
 
 ---
 
@@ -200,13 +205,9 @@ uvicorn app.main:app --reload
 
 Then open <http://localhost:8000/register>.
 
-**SQLite default.** The code default is `DATABASE_URL=sqlite:///./member.db`, but `.env.example`
-ships a PostgreSQL example line, so after `cp .env.example .env` you must either comment that line
-out or set it explicitly for a local SQLite run:
-
-```dotenv
-DATABASE_URL=sqlite:///./member.db
-```
+**SQLite default.** `.env.example` ships `DATABASE_URL=sqlite:///./member.db`, so a plain
+`cp .env.example .env` runs on SQLite with no edits; the PostgreSQL DSN is included as a commented
+line for production. The *code* default (when `DATABASE_URL` is not set at all) is the same value.
 
 `sqlite:///./member.db` is relative to the **current working directory**, so if you run
 `alembic upgrade head` and `uvicorn` from the repository root the file lands at `./member.db`
@@ -490,13 +491,17 @@ The same block is what the test fixtures parse.
 EMAIL_MODE=smtp
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
-SMTP_USER=change-me
-SMTP_PASSWORD=change-me
+SMTP_USER="relay-user"
+SMTP_PASSWORD="relay-password"   # real value only in your .env, never in git
 SMTP_FROM=no-reply@example.com
 SMTP_FROM_NAME=VIPORDER
 SMTP_TLS=true
 SMTP_TIMEOUT_SECONDS=15
 ```
+
+*(Every value above is a placeholder. The project’s own secret scan —
+`scripts/acceptance.py` step 15 — rejects a literal SMTP password assignment anywhere outside
+`.env.example`, which is why the two credentials here are quoted placeholders.)*
 
 Behaviour (`app/email/service.py`):
 
@@ -619,6 +624,41 @@ Request body fields (extra keys are rejected with `422`):
 | `fbclid` | string ≤ 255 | no | Converted to `fbc` in Meta’s `fb.1.<ms>.<fbclid>` format when `fbc` is absent. |
 | `source` | string ≤ 50 | no | One of `web_form`, `api`, `viporder`, `vipgroup`, `import`, `other`; anything else is stored as `other`; default `api`. |
 
+**Error example — `422`** (schema violation):
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "validation_error",
+    "message": "Dữ liệu gửi lên không hợp lệ.",
+    "details": [{"field": "full_name", "message": "Field required"}]
+  },
+  "meta": {"request_id": "41056ffefa614b3fb4c5c385d81d95db"}
+}
+```
+
+The same status is returned when the body passes the schema but fails server-side
+**normalisation** — there the top-level `message` *is* the reason and `details` repeats it with the
+machine field name (these are also the strings the HTML form shows):
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "validation_error",
+    "message": "Email không hợp lệ",
+    "details": [{"field": "email", "message": "Email không hợp lệ"}]
+  },
+  "meta": {"request_id": "66a22099caaf435697e70327b05ce344"}
+}
+```
+
+So `error.details` is **always** a non-empty list of `{"field", "message"}` — branch on
+`error.code`, read `error.details[].field` for the offending input.
+
 ### 7.2 `GET /api/v1/members/{member_id}`
 
 ```bash
@@ -735,8 +775,8 @@ no secrets.
 | `404` | `not_found` | Unknown/malformed member id, or email lookup miss. |
 | `405` | `method_not_allowed` | Wrong HTTP method on a known path. |
 | `413` | `payload_too_large` | Body over `MAX_REQUEST_BYTES`; emitted by middleware before routing (its envelope has an empty `meta`). |
-| `422` | `validation_error` | Pydantic body validation (missing/extra/oversized field) or `NormalizationError` (bad email/phone). `error.details` is a list of `{"field", "message"}` for body validation. |
-| `429` | `rate_limited` | `API_RATE_LIMIT` (or `REGISTER_RATE_LIMIT` on register) exceeded; the response carries `Retry-After` in seconds. |
+| `422` | `validation_error` | Pydantic body validation (missing/extra/oversized/blank field) or `NormalizationError` (bad email/phone). `error.details` is **always** a non-empty list of `{"field", "message"}`. Body validation: the top-level `message` is the generic `Dữ liệu gửi lên không hợp lệ.` and each detail carries Pydantic’s text. Normalisation failure: the top-level `message` **and** the single detail entry carry the Vietnamese reason (e.g. `Email không hợp lệ`), with `field` set to the machine name (`email`, `phone`, `utm`, `url`, `fbclid`, `body`). |
+| `429` | `rate_limited` | `API_RATE_LIMIT` (or `REGISTER_RATE_LIMIT` on register) exceeded; the response carries `Retry-After` in seconds (the HTML 429 page carries it too). |
 | `500` | `internal_error` | Unhandled exception; the `request_id` in `meta` correlates with the server log line. |
 | *any other* | `request_failed` | Fallback for any other `HTTPException` raised by the framework. |
 
@@ -933,6 +973,9 @@ monitoring) is in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**. The short vers
   `https://` origin.
 * **Migrations:** `alembic upgrade head` once per release, before restarting the service; verify with
   `alembic current` (must print `0001_initial (head)`).
+* **Interactive docs:** set `API_DOCS_ENABLED=false` to stop registering `/docs` and
+  `/openapi.json` (both then return `404`), or keep them enabled and protect `/docs` at the reverse
+  proxy. The JSON API itself is never affected.
 * **Reverse proxy:** terminate TLS at nginx/Caddy/Traefik, bind uvicorn to `127.0.0.1`, and set
   `TRUSTED_PROXY_HEADERS=true` **only** when every request genuinely arrives through that proxy
   (otherwise `X-Forwarded-For` can be spoofed and IP rate limiting/hashing is defeated). Keep
@@ -957,6 +1000,14 @@ pytest -q            # the whole suite (Python 3.12, throwaway SQLite per test)
 pytest -q -x         # stop at the first failure
 pytest --cov=app     # with coverage (pytest-cov is a dev dependency)
 ruff check .         # the same lint gate CI uses
+
+# run the exact same suite against PostgreSQL (rows are truncated between tests)
+TEST_DATABASE_URL=postgresql+psycopg://member:member@localhost:5432/member_test pytest -q
+
+# full local acceptance: migrations + uvicorn + 15 end-to-end steps + pytest + secret scan
+python scripts/acceptance.py
+python scripts/acceptance.py --database-url postgresql+psycopg://member:member@localhost:5432/member_test
+python scripts/acceptance.py --skip-tests --port 8123      # other flags: --skip-secret-scan, --keep-db
 ```
 
 `tests/conftest.py` builds the environment *before* importing the app: a fresh temporary SQLite
@@ -964,7 +1015,10 @@ database per test, console email mode, rate limits raised to non-blocking values
 the browser flow (`web.register_and_verify(...)`), a captured console mailbox
 (`mailbox.latest_token()`), an authenticated `admin_client`, a real local HTTP server that records
 webhook deliveries (`webhook_server`), a `closed_port` for connection-error paths and
-`settings_override` for env-var driven tests.
+`settings_override` for env-var driven tests. Exporting **`TEST_DATABASE_URL`** makes the whole
+suite run against that database instead of the per-test SQLite file — truncating the four tables
+between tests — which is exactly what the CI `postgres` job does (so “the tests pass on
+PostgreSQL” is reproducible on any machine, not just in CI).
 
 What is covered today:
 
@@ -975,10 +1029,39 @@ What is covered today:
   verification, retry/backoff and failure paths, Meta `CompleteRegistration` event building (hashed
   `em`/`ph`, `fbp`/`fbc`, `custom_data`), the `disabled` short-circuit, and that
   `dispatch.notify_member_verified()` never raises and records `WEBHOOK_*` / `META_*` events.
-* The shared `tests/conftest.py` fixtures additionally exercise the public HTML flow, the JSON API,
-  the admin UI and the CLI as those suites land.
+* **Registration flow** (`tests/test_register_flow.py`) — the HTML form end to end, CSRF handling,
+  normalisation/validation errors, duplicate handling and the check-email redirect.
+* **Verification** (`tests/test_verification.py`) — one-time tokens (reuse rejected, expiry,
+  superseding), the atomic claim and the `already_verified` path.
+* **JSON API** (`tests/test_api.py`) — envelope shape, `X-API-Key` enforcement, 201-vs-200
+  duplicate semantics, lookup, resend and the `validation_error` `details` list.
+* **Admin UI** (`tests/test_admin.py`) and **CSV export** (`tests/test_export_csv.py`) — login,
+  session guard, filters/search/pagination and the formula-injection-safe export.
+* **Security** (`tests/test_security.py`) — rate limits (including `Retry-After`), header/CSP
+  assertions, hashed-IP storage and token hashing.
 
-**Local acceptance checklist** — run through it after any change:
+### 11.1 End-to-end acceptance harness
+
+`scripts/acceptance.py` is the authoritative local acceptance run. It applies migrations with
+`python -m app.cli init-db`, starts a real `uvicorn app.main:app`, and replays the checklist below
+over HTTP (SQLite by default, or any DSN via `--database-url`), then runs `pytest` and a secret
+scan of tracked files:
+
+| Step | Check |
+|---|---|
+| 1–2 | migrations applied, app starts, `GET /health` → `ok` |
+| 3–5 | `GET /register`, submit the form, member exists in the DB as `pending` |
+| 6–7 | verification URL appears in the console email, clicking it verifies the member |
+| 8–9 | the member is `verified` in the DB; reusing the same token is rejected |
+| 10–12 | admin login, the member is visible in the admin list, CSV export succeeds |
+| 13 | `POST /api/v1/members/register` over HTTP |
+| 14 | `pytest -q` |
+| 15 | secret scan (no real secrets in tracked files, `.env` untracked) |
+
+It exits `0` only when every step passes and prints `LOCAL ACCEPTANCE: x/y steps passed`. The
+default run leaves a throwaway `acceptance.db` in the repository root (git-ignored via `*.db`).
+
+**Manual acceptance checklist** — the same flow by hand, useful when debugging:
 
 1. `alembic upgrade head`, then `alembic current` → `0001_initial (head)`.
 2. `python -m app.cli check-config` → no unexpected warnings; `WEBHOOK_ENABLED` / `META_ENABLED`
@@ -1022,13 +1105,19 @@ Implemented controls (all verifiable in the code):
   in the database, in the webhook payload or in the Meta payload. `IP_HASH_SALT` is
   guard-required in production.
 * **Rate limiting** — registration (HTML + API), `/api/v1/members*` and admin login, each keyed by
-  the salted IP hash, returning `429` with `Retry-After` (API: envelope; HTML: error page). The
-  in-process caveat for multi-worker deployments is documented in §10.
-* **Security headers + CSP** — `Content-Security-Policy` built from configuration
-  (`default-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, plus
-  `googletagmanager`/`facebook` only when the corresponding id is configured),
-  `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
-  `Cross-Origin-Opener-Policy`, `Permissions-Policy` and HSTS when cookies are secure.
+  the salted IP hash. Exceeding a limit returns `429` **on both branches** with a `Retry-After`
+  header in seconds (JSON API: envelope with `error.code = "rate_limited"`; HTML: the Vietnamese
+  error page). The in-process caveat for multi-worker deployments is documented in §10.
+* **Security headers + per-request CSP** — every response carries `X-Content-Type-Options`,
+  `X-Frame-Options: DENY`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy` and
+  HSTS when cookies are secure. The `Content-Security-Policy` is generated per request with a fresh
+  random **nonce** (`script-src`/`style-src` include `'nonce-…'`, exposed to templates as
+  `csp_nonce`) so the inline brand-colour style and the optional GA4/Meta bootstrap run without ever
+  enabling `unsafe-inline`; `default-src 'self'`, `object-src 'none'` and `frame-ancestors 'none'`
+  stay in force, and third-party hosts are allow-listed only when their id is configured.
+* **Verification tokens are redacted from logs** — `RedactTokensFilter` in `app/main.py` rewrites
+  `token=<value>` to `token=***` on the root, `uvicorn` and `uvicorn.access` loggers, so a one-time
+  token never lands in journald/CI output even though it travels in the query string.
 * **CSV formula-injection guard** — exported cells starting with `=`, `+`, `-`, `@`, TAB, CR or LF
   are prefixed with `'`; booleans/dates are normalised, URLs truncated, and the file carries a UTF-8
   BOM. The export is `Cache-Control: no-store` and records an `EXPORT` audit event.
