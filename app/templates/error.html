@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status_code }} — {{ title }}{% endblock %}
+
+{% block content %}
+<section class="card card-narrow center">
+  <p class="error-code" aria-hidden="true">{{ status_code }}</p>
+  <h1 class="page-title">{{ title }}</h1>
+  <div class="alert alert-error" role="alert">{{ message }}</div>
+  <p class="actions">
+    <a class="btn btn-primary" href="/">Về trang chủ</a>
+    <a class="btn btn-ghost" href="/register">Đăng ký</a>
+  </p>
+  {% if brand.support_email %}
+  <p class="muted">
+    Vẫn gặp sự cố? Liên hệ <a href="mailto:{{ brand.support_email }}">{{ brand.support_email }}</a>.
+  </p>
+  {% endif %}
+</section>
+{% endblock %}
