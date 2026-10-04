@@ -189,8 +189,21 @@ class Settings(BaseSettings):
                 )
             elif not self.smtp_host:
                 problems.append("SMTP_HOST is required when EMAIL_MODE=smtp - set SMTP_HOST to your mail relay")
-            if self.admin_configured and _placeholder(self.admin_password_hash):
-                problems.append("ADMIN_PASSWORD_HASH is still a placeholder - generate one with app.cli")
+            if self.admin_configured:
+                from app.security import parse_password_hash
+
+                if _placeholder(self.admin_password_hash):
+                    problems.append(
+                        "ADMIN_PASSWORD_HASH is still a placeholder - generate one with "
+                        "`python -m app.cli hash-password`"
+                    )
+                elif parse_password_hash(self.admin_password_hash) is None:
+                    problems.append(
+                        "ADMIN_PASSWORD_HASH is malformed (expected "
+                        "'scrypt:<n>:<r>:<p>:<salt>:<digest>') - regenerate it with "
+                        "`python -m app.cli hash-password` (a bare '$' in a .env file is "
+                        "usually eaten by Docker Compose or by `source`)"
+                    )
             if problems:
                 raise ValueError("Invalid production configuration: " + "; ".join(problems))
         return self

@@ -16,6 +16,12 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_DKLEN = 32
 SCRYPT_PREFIX = "scrypt"
+# Colon separated on purpose: the encoded hash travels through .env files, Docker Compose
+# env_file entries and shell `source`, all of which mangle a bare "$" (Compose interpolates
+# "$1"/"$16384" away, `source` expands them). ":" is inert everywhere, and verify_password
+# still accepts the legacy "$" separator so existing hashes keep working.
+SCRYPT_SEPARATOR = ":"
+SCRYPT_SEPARATORS = (":", "$")
 
 # Pre-generated scrypt hash of a random throwaway password. Login always verifies
 # against *some* hash (this one when the email does not match) so an unknown email
@@ -34,7 +40,7 @@ def hash_password(password: str) -> str:
     digest = hashlib.scrypt(
         password.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=SCRYPT_DKLEN
     )
-    return "$".join(
+    return SCRYPT_SEPARATOR.join(
         [
             SCRYPT_PREFIX,
             str(SCRYPT_N),
@@ -46,14 +52,32 @@ def hash_password(password: str) -> str:
     )
 
 
+def parse_password_hash(stored_hash: str) -> tuple[str, str, str, str, str, str] | None:
+    """Split a stored hash into its six fields, accepting ":" and legacy "$" separators.
+
+    Returns ``None`` for anything that is not a well-formed scrypt hash - callers use that
+    to reject corrupted configuration instead of silently failing every login.
+    """
+    if not stored_hash:
+        return None
+    for separator in SCRYPT_SEPARATORS:
+        if separator not in stored_hash:
+            continue
+        parts = stored_hash.split(separator)
+        if len(parts) == 6 and parts[0] == SCRYPT_PREFIX:
+            return tuple(parts)  # type: ignore[return-value]
+    return None
+
+
 def verify_password(password: str, stored_hash: str) -> bool:
     """Constant-time scrypt verification. Never raises on malformed hashes."""
     if not password or not stored_hash:
         return False
     try:
-        prefix, n, r, p, salt_b64, digest_b64 = stored_hash.split("$")
-        if prefix != SCRYPT_PREFIX:
+        parts = parse_password_hash(stored_hash)
+        if parts is None:
             return False
+        prefix, n, r, p, salt_b64, digest_b64 = parts
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(digest_b64)
         candidate = hashlib.scrypt(

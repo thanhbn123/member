@@ -239,3 +239,56 @@ def test_admin_exposing_routes_require_authentication(client, web, db_session):
         assert "/admin/login" in response.headers["location"]
         assert "guarded@example.com" not in response.text
         assert "text/csv" not in response.headers.get("content-type", "")
+
+
+# --------------------------------------------------------------------------- hash encoding
+def test_scrypt_hash_uses_a_shell_safe_separator():
+    """The encoded hash travels through .env files, Compose env_file and `source`.
+
+    A "$" separator gets interpolated away by Docker Compose ("$1", "$16384") and by shell
+    `source`, which silently corrupts the hash and locks the operator out of /admin (this
+    happened in production). The canonical encoding must therefore contain no "$".
+    """
+    from app.security import hash_password, parse_password_hash, verify_password
+
+    encoded = hash_password("Correct-Horse-Battery-9")
+    assert "$" not in encoded
+    assert encoded.startswith("scrypt:")
+    parts = parse_password_hash(encoded)
+    assert parts is not None and len(parts) == 6
+    assert verify_password("Correct-Horse-Battery-9", encoded) is True
+    assert verify_password("wrong", encoded) is False
+
+
+def test_legacy_dollar_separated_hashes_still_verify():
+    from app.security import hash_password, verify_password
+
+    legacy = hash_password("Legacy-Passw0rd").replace(":", "$")
+    assert verify_password("Legacy-Passw0rd", legacy) is True
+
+
+def test_malformed_hash_never_authenticates_and_blocks_production(monkeypatch):
+    from app.security import parse_password_hash, verify_password
+
+    for broken in ("", "x", "scrypt63844VSq", "scrypt:16384:8:1:only-five", "bcrypt$1$2$3$4$5"):
+        assert parse_password_hash(broken) is None
+        assert verify_password("anything", broken) is False
+
+    # ...and a corrupted value is refused at startup instead of locking the operator out later.
+    import pytest
+
+    from app.config import Settings
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "a" * 64)
+    monkeypatch.setenv("IP_HASH_SALT", "b" * 32)
+    monkeypatch.setenv("MEMBER_API_KEY", "c" * 48)
+    monkeypatch.setenv("EMAIL_MODE", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://members.example.com")
+    monkeypatch.setenv("ADMIN_EMAIL", "admin@example.com")
+    monkeypatch.setenv("ADMIN_PASSWORD_HASH", "scrypt63844VSq")
+    with pytest.raises(Exception) as excinfo:
+        Settings(_env_file=None)
+    assert "ADMIN_PASSWORD_HASH is malformed" in str(excinfo.value)
