@@ -206,10 +206,10 @@ def _send_smtp(
 ) -> EmailResult:
     try:
         message = _build_message(settings, to, subject, text_body, html_body)
-        with smtplib.SMTP(
-            settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds
-        ) as smtp:
-            if settings.smtp_tls:
+        # Port 465 speaks TLS from the first byte; 587/25 upgrade with STARTTLS.
+        client = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
+        with client(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as smtp:
+            if settings.smtp_tls and settings.smtp_port != 465:
                 smtp.starttls()
             if settings.smtp_user:
                 smtp.login(settings.smtp_user, settings.smtp_password)

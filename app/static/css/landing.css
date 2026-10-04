@@ -110,7 +110,7 @@ body.landing .main {
 
 .hero {
   margin-bottom: 2.75rem;
-  padding: 2rem 1.25rem;
+  padding: 1.5rem 1.15rem;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: linear-gradient(180deg, var(--wash) 0%, var(--surface) 72%);
@@ -127,7 +127,7 @@ body.landing .main {
 }
 
 .hero-title {
-  font-size: 1.9rem;
+  font-size: clamp(1.45rem, 6.2vw, 1.9rem);
   line-height: 1.16;
   margin: 0 0 .75rem;
   max-width: 24ch;
@@ -136,7 +136,7 @@ body.landing .main {
 .hero-subtitle {
   margin: 0 0 1.5rem;
   color: var(--muted);
-  font-size: 1.04rem;
+  font-size: clamp(.98rem, 2.6vw, 1.04rem);
   line-height: 1.65;
   max-width: 58ch;
 }
@@ -359,6 +359,18 @@ body.landing select:focus { border-color: var(--brand); }
 }
 
 /* --------------------------------------------------------- >= 640px */
+
+/* ---------- phones ---------- */
+@media (max-width: 640px) {
+  .hero { padding: 1.35rem 1.05rem; margin-bottom: 1.9rem; }
+  .hero-title { max-width: none; }
+  /* stacked, full-width buttons are far easier to tap than two side-by-side pills */
+  .hero-actions { flex-direction: column; align-items: stretch; }
+  .hero-actions .btn { width: 100%; text-align: center; }
+  .hero-trust { gap: .35rem .9rem; font-size: .82rem; }
+  .hero-media { margin-top: 1.25rem; }
+  .hero-image { max-height: 46vh; object-fit: cover; }
+}
 
 @media (min-width: 640px) {
   body.landing .main { padding-top: 2.25rem; }

@@ -453,3 +453,41 @@ def test_verification_email_carries_an_absolute_logo(settings_env, monkeypatch):
     assert 'src="https://members.example.com/static/img/qkwr-logo-horizontal.png"' in sent["html"]
     assert "/static/img/qkwr-logo-horizontal.png" not in sent["text"]  # text stays link-only
     assert "https://members.example.com/verify-email?token=t" in sent["text"]
+
+
+# --------------------------------------------------------------------------- SMTP config
+def test_smtp_settings_accept_the_operator_variable_names(monkeypatch):
+    """The runbook uses SMTP_USERNAME / SMTP_FROM_EMAIL / SMTP_USE_TLS; both spellings work."""
+    from app.config import Settings
+
+    monkeypatch.setenv("SMTP_USERNAME", "owner@example.com")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "no-reply@example.com")
+    monkeypatch.setenv("SMTP_USE_TLS", "true")
+    monkeypatch.setenv("SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    settings = Settings(_env_file=None)
+    assert settings.smtp_user == "owner@example.com"
+    assert settings.smtp_from == "no-reply@example.com"
+    assert settings.smtp_tls is True
+    assert (settings.smtp_host, settings.smtp_port) == ("smtp.gmail.com", 587)
+
+
+def test_check_smtp_reports_failure_without_leaking_the_password(monkeypatch, capsys, closed_port):
+    """`member-cli check-smtp` is the acceptance evidence command: staged PASS/FAIL, no secrets."""
+    from app.cli import main
+
+    monkeypatch.setenv("SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("SMTP_PORT", str(closed_port))
+    monkeypatch.setenv("SMTP_USER", "owner@example.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "SuperSecretAppPassword")
+    monkeypatch.setenv("SMTP_FROM", "owner@example.com")
+    from app.config import reset_settings_cache
+
+    reset_settings_cache()
+
+    exit_code = main(["check-smtp"])
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "SMTP CONNECT" in output and "FAIL" in output
+    assert "SuperSecretAppPassword" not in output
+    assert "o***@example.com" in output  # the address itself is masked

@@ -13,7 +13,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_SECRET_KEY = "dev-insecure-secret-key-change-me"
@@ -91,13 +91,15 @@ class Settings(BaseSettings):
     email_mode: Literal["console", "smtp"] = "console"
 
     # ---------- smtp ----------
+    # SMTP_USERNAME / SMTP_FROM_EMAIL / SMTP_USE_TLS are accepted as aliases so the names used
+    # by the operator runbook (and by other VIPORDER services) work unchanged.
     smtp_host: str = ""
     smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
+    smtp_user: str = Field(default="", validation_alias=AliasChoices("SMTP_USER", "SMTP_USERNAME"))
+    smtp_password: str = Field(default="", validation_alias=AliasChoices("SMTP_PASSWORD", "SMTP_PASS"))
+    smtp_from: str = Field(default="", validation_alias=AliasChoices("SMTP_FROM", "SMTP_FROM_EMAIL"))
     smtp_from_name: str = ""
-    smtp_tls: bool = True
+    smtp_tls: bool = Field(default=True, validation_alias=AliasChoices("SMTP_TLS", "SMTP_USE_TLS"))
     smtp_timeout_seconds: int = 15
 
     # ---------- rate limiting (in-process; use a shared store for multi-worker) ----------

@@ -85,6 +85,129 @@ def cmd_check_config(_: argparse.Namespace) -> int:
     return 0
 
 
+def _mask_email(address: str) -> str:
+    local, _, domain = (address or "").partition("@")
+    if not domain:
+        return "***"
+    return f"{local[:1]}***@{domain}"
+
+
+def cmd_check_smtp(args: argparse.Namespace) -> int:
+    """Prove the SMTP path stage by stage: CONNECT -> STARTTLS -> AUTH -> SEND.
+
+    The password is never printed, and neither is the raw recipient (masked). This is the
+    evidence command for the real-SMTP acceptance.
+    """
+    import smtplib
+    from email.message import EmailMessage
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    host, port = settings.smtp_host, settings.smtp_port
+    sender = settings.smtp_from or settings.smtp_user
+    recipient = args.to or sender
+
+    print(f"SMTP_HOST        : {host or '(empty)'}")
+    print(f"SMTP_PORT        : {port}")
+    print(f"STARTTLS/SSL     : {'implicit TLS' if port == 465 else ('starttls' if settings.smtp_tls else 'none')}")
+    print(f"SMTP_USER        : {_mask_email(settings.smtp_user) if settings.smtp_user else '(none)'}")
+    print(f"SMTP_PASSWORD    : {'set (' + str(len(settings.smtp_password)) + ' chars)' if settings.smtp_password else '(empty)'}")
+    print(f"SMTP_FROM        : {_mask_email(sender) if sender else '(empty)'}")
+    print(f"recipient        : {_mask_email(recipient) if recipient else '(empty)'}")
+
+    if not host or not sender or not recipient:
+        print("RESULT: configuration incomplete (need SMTP_HOST, SMTP_FROM/SMTP_USER, recipient)")
+        return 2
+
+    results: dict[str, str] = {}
+    client = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
+    try:
+        with client(host, port, timeout=settings.smtp_timeout_seconds) as smtp:
+            results["SMTP CONNECT"] = "PASS"
+            print(f"banner           : {smtp.ehlo()[1][:120]!r}")
+            if settings.smtp_tls and port != 465:
+                code, response = smtp.starttls()
+                smtp.ehlo()
+                results["STARTTLS"] = "PASS" if code == 220 else "FAIL"
+                print(f"starttls         : {code} {response[:80]!r}")
+            else:
+                results["STARTTLS"] = "n/a"
+            if settings.smtp_user:
+                try:
+                    smtp.login(settings.smtp_user, settings.smtp_password)
+                    results["SMTP AUTH"] = "PASS"
+                except smtplib.SMTPAuthenticationError as exc:
+                    results["SMTP AUTH"] = "FAIL"
+                    print(f"auth error       : {exc.smtp_code} {exc.smtp_error!r}")
+            else:
+                results["SMTP AUTH"] = "n/a (no user configured)"
+
+            message = EmailMessage()
+            message["From"] = sender
+            message["To"] = recipient
+            message["Subject"] = args.subject or "[MEMBER] SMTP acceptance test"
+            message.set_content(
+                "MEMBER service SMTP acceptance test.\n"
+                "No action required. This message proves the SMTP path end to end.\n"
+            )
+            smtp.send_message(message)
+            results["GMAIL MESSAGE ACCEPTED"] = "PASS"
+    except Exception as exc:  # noqa: BLE001 - the operator needs the reason
+        failed_stage = next(
+            (stage for stage in ("SMTP CONNECT", "STARTTLS", "SMTP AUTH", "GMAIL MESSAGE ACCEPTED")
+             if stage not in results),
+            "SEND",
+        )
+        results.setdefault(failed_stage, "FAIL")
+        print(f"error            : {type(exc).__name__}: {exc}")
+
+    print()
+    for stage in ("SMTP CONNECT", "STARTTLS", "SMTP AUTH", "GMAIL MESSAGE ACCEPTED"):
+        print(f"{stage:24s}: {results.get(stage, 'NOT REACHED')}")
+    failed = [stage for stage, value in results.items() if value == "FAIL"]
+    if failed:
+        print(f"RESULT: FAIL ({', '.join(failed)})")
+        return 1
+    print("RESULT: PASS - the SMTP server accepted the message (inbox delivery still needs the recipient)")
+    return 0
+
+
+def cmd_member_status(args: argparse.Namespace) -> int:
+    """Read-only view of one member's verification state (owner acceptance helper)."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import EmailVerificationToken, Member
+
+    email = args.email.strip().lower()
+    with session_scope() as db:
+        member = db.execute(select(Member).where(Member.email == email)).scalar_one_or_none()
+        if member is None:
+            print(f"member {_mask_email(email)}: NOT FOUND")
+            return 1
+        tokens = list(
+            db.execute(
+                select(EmailVerificationToken)
+                .where(EmailVerificationToken.member_id == member.id)
+                .order_by(EmailVerificationToken.id.desc())
+            ).scalars()
+        )
+        print(f"member           : {_mask_email(member.email)}")
+        print(f"status           : {member.status}")
+        print(f"email_verified_at: {member.email_verified_at or '(not verified)'}")
+        print(f"created_at       : {member.created_at}")
+        print(f"tokens           : {len(tokens)}")
+        for token in tokens[:5]:
+            print(
+                f"  - id={token.id} expires={token.expires_at} "
+                f"{'used at ' + str(token.used_at) if token.used_at else 'unused'}"
+            )
+        verified = member.status == "verified" and member.email_verified_at is not None
+        print(f"VERIFIED         : {'YES' if verified else 'NO'}")
+    return 0
+
+
 def cmd_init_db(_: argparse.Namespace) -> int:
     from alembic.config import Config
 
@@ -113,6 +236,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init-db", help="apply migrations (alembic upgrade head)")
     p_init.set_defaults(func=cmd_init_db)
+
+    p_smtp = sub.add_parser("check-smtp", help="prove the SMTP path (CONNECT/STARTTLS/AUTH/SEND)")
+    p_smtp.add_argument("--to", help="recipient (default: SMTP_FROM / SMTP_USER)")
+    p_smtp.add_argument("--subject", help="subject of the test message")
+    p_smtp.set_defaults(func=cmd_check_smtp)
+
+    p_status = sub.add_parser("member-status", help="verification state of one member")
+    p_status.add_argument("--email", required=True)
+    p_status.set_defaults(func=cmd_member_status)
     return parser
 
 

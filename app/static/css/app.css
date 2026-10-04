@@ -75,12 +75,25 @@ time { color: var(--muted); font-size: .85rem; }
   display: flex; align-items: center; justify-content: space-between;
   gap: .75rem; min-height: 64px; padding-top: .5rem; padding-bottom: .5rem;
 }
-.brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; color: inherit; }
-.brand-logo { display: block; width: auto; }
-.brand-text { display: flex; flex-direction: column; }
-.brand-name { font-weight: 700; font-size: 1.05rem; }
-.brand-tagline { color: var(--muted); font-size: .8rem; }
-.site-nav { display: flex; gap: 1rem; font-size: .95rem; }
+/* The brand block keeps its natural width: a logo squeezed by a long nav bar is the one
+   thing that must never happen (the image would be distorted, not just scaled). */
+.brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; color: inherit;
+  flex: 0 0 auto; max-width: 100%; }
+/* The logo scales with the viewport so it always fits the header frame: 26px on a small
+   phone, 40px from tablet up. width:auto keeps the aspect ratio, and the height attribute
+   in the markup still reserves space before the image loads (no layout shift). */
+.brand-logo { display: block; width: auto; height: clamp(26px, 7.5vw, 40px); flex: 0 0 auto;
+  max-width: 100%; object-fit: contain; }
+.brand-text { display: flex; flex-direction: column; min-width: 0; }
+.brand-name { font-weight: 700; font-size: 1.05rem; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.brand-tagline { color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+/* The nav never shrinks: if the logo + links do not fit, the container wraps the links onto
+   their own row (mobile) instead of squeezing anything. */
+.site-nav { display: flex; gap: 1rem; font-size: .95rem; flex: 0 0 auto; align-items: center;
+  flex-wrap: wrap; justify-content: flex-end; }
+.site-nav a { padding: .35rem .1rem; }
 .site-nav a { text-decoration: none; }
 .site-nav a:hover { text-decoration: underline; }
 
@@ -243,6 +256,42 @@ input[aria-invalid="true"] { border-color: var(--danger); }
   .kv { grid-template-columns: 220px minmax(0, 1fr); }
   .kv dt { margin-top: 0; padding: .3rem 0; border-bottom: 1px solid var(--border); }
   .kv dd { padding: .3rem 0; border-bottom: 1px solid var(--border); }
+}
+
+/* ---------- phones ---------- */
+@media (max-width: 640px) {
+  /* the nav drops to a second row when it no longer fits next to the logo, instead of
+     squeezing the brand */
+  .header-inner { min-height: 56px; gap: .35rem .5rem; flex-wrap: wrap; row-gap: .3rem; }
+  .site-nav { justify-content: flex-start; gap: .35rem 1rem; font-size: .92rem; }
+  .site-nav a { padding: .45rem .1rem; }
+  /* the tagline is the widest part of the header and is already in the hero on the
+     landing page - dropping it here is what keeps the logo inside the frame */
+  .brand-tagline { display: none; }
+  .brand-name { font-size: 1rem; }
+  .main { padding: 1.25rem 0 2rem; }
+  .card { padding: 1.15rem; border-radius: 10px; }
+  .page-title { font-size: 1.4rem; }
+  /* comfortable touch targets on phones */
+  .btn, .btn-sm, button[type="submit"] { min-height: 44px; padding: .7rem 1rem; }
+  .btn-sm { padding: .55rem .75rem; }
+  .actions { flex-direction: column; }
+  .actions .btn { width: 100%; }
+  /* iOS never zooms on focus when the field is at least 16px */
+  input, select, textarea { font-size: 16px; }
+  .table { font-size: .85rem; }
+  /* 14 columns with date labels need ~35px each; below that the wrapper scrolls instead of
+     mashing the labels together */
+  .chart { min-width: 500px; height: 160px; gap: .45rem; }
+  .chart-label { font-size: .58rem; }
+  .chart-value { font-size: .66rem; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 420px) {
+  /* the logo already carries the brand name, so on a narrow phone it gets the whole row */
+  .has-logo .brand-text { display: none; }
+  .wrap { padding: 0 .85rem; }
 }
 
 @media print {

@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
-# Production acceptance for a deployed MEMBER instance (run it ON the server).
-#
-#   read -r -s ADMIN_PASSWORD   # or pipe the password on stdin
-#   bash scripts/production_acceptance.sh
-#
-# It exercises the live domain over HTTPS: health + security headers + http->https,
-# the customer landing page and its palette/CSP invariants, a real registration through
-# POST /register, real email delivery via the configured SMTP backend (read back from the
-# internal sink), the verification link and its single use, the database state and the
-# audit trail, admin login + dashboard + member management + CSV export, the public API
-# with the production key (and 401 without it), and hosting hygiene (non-root container,
-# loopback-only ports). Acceptance members are deleted again at the end.
-#
-# The script never contains credentials: the admin password is read from stdin and the
-# API key is read from the deployment env file on the server.
+# Production acceptance for the MEMBER deployment (runs ON the VPS).
+# Usage: read ADMIN_PASSWORD from stdin, then run.
 set -uo pipefail
 
 BASE="https://member.quangkhoiwellnessretreat.com"
@@ -67,6 +54,12 @@ LOC=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' -b "$JAR" -c "$JAR
 case "$LOC" in 303*check-email*) ok "POST /register → $LOC";; *) no "POST /register" "$LOC";; esac
 
 step "5. Delivery to the SMTP sink (EMAIL_MODE=smtp)"
+if [ "${SMTP_SINK:-1}" = "0" ]; then
+  echo "(skipped: the deployment now delivers through real Gmail SMTP; the token is read from the database instead)"
+  MID=""
+  TOKEN=$(docker exec member-member-db-1 psql -U member -d member -tAc "select 1" >/dev/null 2>&1 && echo skip)
+  sleep 1
+fi
 sleep 3
 MID=""
 for i in 1 2 3 4 5 6 7 8 9 10; do

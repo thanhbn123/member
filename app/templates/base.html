@@ -54,7 +54,7 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main">Bỏ qua tới nội dung chính</a>
-  <header class="site-header">
+  <header class="site-header{% if brand.logo_url %} has-logo{% endif %}">
     <div class="wrap header-inner">
       <a class="brand" href="/">
         {% if brand.logo_url %}
