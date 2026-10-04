@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} — {{ brand.name }}{% endblock %}
+
+{% block content %}
+<section class="card card-narrow center">
+  {% if success %}
+  <div class="state-icon state-icon-success" aria-hidden="true">✓</div>
+  {% else %}
+  <div class="state-icon state-icon-error" aria-hidden="true">!</div>
+  {% endif %}
+
+  <h1 class="page-title">{{ title }}</h1>
+
+  <div class="alert {{ 'alert-success' if success else 'alert-error' }}" role="{{ 'status' if success else 'alert' }}">
+    {{ message }}
+  </div>
+
+  <p class="actions">
+    {% if success %}
+    <a class="btn btn-primary" href="/welcome">Vào trang thành viên</a>
+    {% else %}
+    <a class="btn btn-primary" href="/register">Gửi lại email xác minh</a>
+    {% endif %}
+    <a class="btn btn-ghost" href="/">Về trang chủ</a>
+  </p>
+
+  {% if not success %}
+  <p class="muted">
+    Liên kết xác minh <strong>có thời hạn</strong> và chỉ dùng được một lần.
+    Hãy đăng ký lại để nhận liên kết mới.
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

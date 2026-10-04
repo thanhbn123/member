@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% set f = form if form is defined and form else {} %}
+{% set a = attribution if attribution is defined and attribution else {} %}
+{% set consent_checked = f.get('consent_marketing') in ['true', 'on', '1', true, 'yes'] %}
+{% set consent_mandatory = consent_required|default(false) %}
+
+{% block title %}Đăng ký thành viên — {{ brand.name }}{% endblock %}
+
+{% block content %}
+<section class="card card-narrow">
+  <h1 class="page-title">Đăng ký thành viên</h1>
+  {% if brand.tagline %}<p class="page-subtitle">{{ brand.tagline }}</p>{% endif %}
+
+  {% if success_message %}
+  <div class="alert alert-success" role="status">{{ success_message }}</div>
+  {% endif %}
+  {% if error_message %}
+  <div class="alert alert-error" role="alert">{{ error_message }}</div>
+  {% endif %}
+  {% if errors %}
+  <div class="alert alert-error" id="form-errors" role="alert" aria-live="polite">
+    <p class="alert-title">Vui lòng kiểm tra lại thông tin:</p>
+    <ul class="alert-list">
+      {% for item in errors %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/register" novalidate id="register-form" class="form" data-register-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    {# Attribution / tracking values (never required, always autoescaped). #}
+    <input type="hidden" name="utm_source" value="{{ a.get('utm_source', '') }}">
+    <input type="hidden" name="utm_medium" value="{{ a.get('utm_medium', '') }}">
+    <input type="hidden" name="utm_campaign" value="{{ a.get('utm_campaign', '') }}">
+    <input type="hidden" name="utm_content" value="{{ a.get('utm_content', '') }}">
+    <input type="hidden" name="utm_term" value="{{ a.get('utm_term', '') }}">
+    <input type="hidden" name="landing_url" value="{{ a.get('landing_url', '') }}">
+    <input type="hidden" name="referrer" value="{{ a.get('referrer', '') }}">
+    <input type="hidden" name="fbp" value="{{ a.get('fbp', '') }}">
+    <input type="hidden" name="fbc" value="{{ a.get('fbc', '') }}">
+
+    <div class="field">
+      <label for="full_name">Họ và tên <span class="req" aria-hidden="true">*</span></label>
+      <input type="text" id="full_name" name="full_name" required maxlength="200"
+             autocomplete="name" value="{{ f.get('full_name', '') }}"
+             aria-describedby="full_name_hint">
+      <p class="hint" id="full_name_hint">Tên đầy đủ của bạn.</p>
+    </div>
+
+    <div class="field">
+      <label for="email">Email <span class="req" aria-hidden="true">*</span></label>
+      <input type="email" id="email" name="email" required maxlength="320"
+             autocomplete="email" inputmode="email" value="{{ f.get('email', '') }}">
+    </div>
+
+    <div class="field">
+      <label for="phone">Số điện thoại</label>
+      <input type="tel" id="phone" name="phone" maxlength="64"
+             autocomplete="tel" inputmode="tel" value="{{ f.get('phone', '') }}">
+    </div>
+
+    <div class="field">
+      <label for="company">Công ty / tổ chức</label>
+      <input type="text" id="company" name="company" maxlength="200"
+             autocomplete="organization" value="{{ f.get('company', '') }}">
+    </div>
+
+    <div class="field field-check">
+      <label class="check" for="consent_marketing">
+        <input type="checkbox" id="consent_marketing" name="consent_marketing" value="true"
+               {% if consent_checked %}checked{% endif %}
+               {% if consent_mandatory %}required{% endif %}>
+        <span>Tôi đồng ý nhận thông tin, ưu đãi và bản tin qua email{% if consent_mandatory %} <span class="req" aria-hidden="true">*</span>{% else %} (không bắt buộc){% endif %}.</span>
+      </label>
+    </div>
+
+    <p class="field-error" data-register-error role="alert" hidden></p>
+
+    <button type="submit" class="btn btn-primary btn-block">Đăng ký</button>
+  </form>
+
+  <p class="cta-secondary">
+    Sau khi đăng ký, chúng tôi sẽ gửi cho bạn một <strong>email xác minh</strong>.
+    Hãy mở email và bấm vào liên kết xác minh để kích hoạt tài khoản thành viên.
+  </p>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/register.js" defer></script>{% endblock %}

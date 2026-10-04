@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Kiểm tra email — {{ brand.name }}{% endblock %}
+
+{% block content %}
+{% set resend = resend_url|default('/register', true) %}
+{% set sent = email_sent|default(true) %}
+<section class="card card-narrow center">
+  <div class="state-icon {{ 'state-icon-info' if sent else 'state-icon-error' }}" aria-hidden="true">{{ '✉' if sent else '!' }}</div>
+  <h1 class="page-title">{{ 'Kiểm tra hộp thư của bạn' if sent else 'Chưa gửi được email xác minh' }}</h1>
+  {% if sent %}
+  <p class="page-subtitle">
+    Chúng tôi đã gửi email xác minh tới <strong>{{ email_masked }}</strong>.
+  </p>
+  {% else %}
+  <div class="alert alert-error" role="alert">
+    Hệ thống chưa gửi được email xác minh tới <strong>{{ email_masked }}</strong>.
+    Vui lòng bấm “Gửi lại email xác minh” bên dưới.
+  </div>
+  {% endif %}
+
+  <ol class="steps">
+    <li>Mở email vừa nhận từ {{ brand.name }}.</li>
+    <li>Bấm vào liên kết xác minh trong email.</li>
+    <li>Hoàn tất — tài khoản thành viên của bạn sẽ được kích hoạt.</li>
+  </ol>
+
+  <div class="alert alert-info" role="note">
+    <p>Không thấy email? Hãy kiểm tra thư mục <strong>Spam / Quảng cáo / Thư rác</strong>.</p>
+    <p>Liên kết xác minh <strong>có thời hạn</strong>, vui lòng xác minh sớm.</p>
+  </div>
+
+  <p class="actions">
+    <a class="btn btn-primary" href="{{ resend }}">Gửi lại email xác minh</a>
+  </p>
+
+  <p class="muted">
+    Nếu bạn nhập sai địa chỉ email,
+    <a href="{{ resend }}">đăng ký lại</a> để nhận email mới.
+  </p>
+</section>
+{% endblock %}

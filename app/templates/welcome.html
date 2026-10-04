@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}{% if verified %}Chào mừng{% else %}Cần xác minh email{% endif %} — {{ brand.name }}{% endblock %}
+
+{% block content %}
+{% if verified %}
+<section class="card card-narrow">
+  <div class="state-icon state-icon-success" aria-hidden="true">✓</div>
+  <h1 class="page-title">Xin chào, {{ member.full_name }}!</h1>
+  <p class="page-subtitle">
+    Bạn đã trở thành thành viên của {{ brand.name }}.
+  </p>
+
+  <dl class="kv">
+    <dt>Email</dt>
+    <dd>{{ member.email }}</dd>
+    {% if member.company %}
+    <dt>Công ty / tổ chức</dt>
+    <dd>{{ member.company }}</dd>
+    {% endif %}
+    <dt>Trạng thái</dt>
+    <dd><span class="pill pill-{{ member.status }}">{{ member.status }}</span></dd>
+  </dl>
+
+  <h2 class="section-title">Bước tiếp theo</h2>
+  <ul class="steps steps-plain">
+    <li>Lưu email của chúng tôi vào danh bạ để không bỏ lỡ thông tin.</li>
+    <li>Theo dõi hộp thư để nhận bản tin và ưu đãi dành cho thành viên.</li>
+    {% if brand.support_email %}
+    <li>Cần hỗ trợ? Gửi email tới <a href="mailto:{{ brand.support_email }}">{{ brand.support_email }}</a>.</li>
+    {% endif %}
+  </ul>
+
+  {% if cta_url %}
+  <p class="actions">
+    <a class="btn btn-primary" href="{{ cta_url }}">Tiếp tục</a>
+  </p>
+  {% endif %}
+</section>
+{% else %}
+{# A pending (or unknown) visitor must never be told they are already a member. #}
+<section class="card card-narrow">
+  <div class="state-icon state-icon-info" aria-hidden="true">✉</div>
+  <h1 class="page-title">Email chưa được xác minh</h1>
+  <p class="page-subtitle">
+    Tài khoản thành viên của bạn chưa được kích hoạt. Chúng tôi đã gửi một email xác minh;
+    hãy mở liên kết trong email đó để hoàn tất đăng ký.
+  </p>
+
+  {% if email_masked %}
+  <dl class="kv">
+    <dt>Email</dt>
+    <dd>{{ email_masked }}</dd>
+  </dl>
+  {% endif %}
+
+  <h2 class="section-title">Bước tiếp theo</h2>
+  <ul class="steps steps-plain">
+    <li>Kiểm tra hộp thư (kể cả thư rác) để tìm email xác minh của {{ brand.name }}.</li>
+    <li>Liên kết xác minh chỉ dùng được một lần và có thời hạn.</li>
+    {% if brand.support_email %}
+    <li>Cần hỗ trợ? Gửi email tới <a href="mailto:{{ brand.support_email }}">{{ brand.support_email }}</a>.</li>
+    {% endif %}
+  </ul>
+
+  <p class="actions">
+    <a class="btn btn-primary" href="/register">Gửi lại email xác minh</a>
+    <a class="btn btn-ghost" href="/check-email">Kiểm tra email</a>
+  </p>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff + compileall)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff check
+        run: ruff check .
+      - name: Byte-compile the app package
+        run: python -m compileall -q app
+
+  test:
+    name: test (python 3.12, sqlite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: sqlite:///./ci.db
+      SECRET_KEY: ci-only-secret-key-not-used-in-production
+      IP_HASH_SALT: ci-only-ip-hash-salt-not-used-in-production
+      EMAIL_MODE: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Apply migrations (sqlite)
+        run: alembic upgrade head
+      - name: Run tests
+        run: pytest -q
+
+  postgres:
+    name: postgres 16 (migrations + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: member
+          POSTGRES_PASSWORD: member
+          POSTGRES_DB: member_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U member -d member_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+psycopg://member:member@localhost:5432/member_test
+      # Makes the whole suite run against PostgreSQL instead of the per-test SQLite file.
+      TEST_DATABASE_URL: postgresql+psycopg://member:member@localhost:5432/member_test
+      SECRET_KEY: ci-only-secret-key-not-used-in-production
+      IP_HASH_SALT: ci-only-ip-hash-salt-not-used-in-production
+      EMAIL_MODE: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Apply migrations (postgresql)
+        run: alembic upgrade head
+      - name: Run tests against PostgreSQL
+        run: pytest -q
