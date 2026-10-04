@@ -39,11 +39,17 @@ CONSOLE_LOCAL_BANNER = (
 
 @dataclass(slots=True)
 class EmailResult:
-    """Outcome of a send attempt (never an exception)."""
+    """Outcome of a send attempt (never an exception).
+
+    ``detail`` carries the provider's own acceptance line for successful sends (for Gmail that
+    is the ``250 2.0.0 OK <queue id> - gsmtp`` response). It is what support quotes when a
+    recipient says "I never got it": our audit trail then holds the exact queue id and time.
+    """
 
     sent: bool
     backend: str
     error: str | None = None
+    detail: str | None = None
 
 
 # --------------------------------------------------------------------------- public API
@@ -213,10 +219,15 @@ def _send_smtp(
                 smtp.starttls()
             if settings.smtp_user:
                 smtp.login(settings.smtp_user, settings.smtp_password)
-            smtp.send_message(message)
+            response = smtp.send_message(message)
     except Exception as exc:  # email must never break the caller
         logger.warning("SMTP delivery to %s failed: %s", to, exc)
         return EmailResult(False, SMTP_BACKEND, error=str(exc) or exc.__class__.__name__)
 
-    logger.info("SMTP delivery to %s succeeded (subject=%s)", to, subject)
-    return EmailResult(True, SMTP_BACKEND)
+    # smtplib returns {recipient: (code, message)} for the accepted message.
+    detail = ""
+    if isinstance(response, dict) and response:
+        code, text = next(iter(response.values()))
+        detail = f"{code} {text}".strip()[:300]
+    logger.info("SMTP delivery to %s succeeded (subject=%s, response=%s)", to, subject, detail or "n/a")
+    return EmailResult(True, SMTP_BACKEND, detail=detail or None)

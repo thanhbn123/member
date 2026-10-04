@@ -260,13 +260,19 @@ def _deliver_verification(db: Session, member: Member, url: str) -> tuple[bool, 
     except Exception as exc:  # defensive: the email backend must not break registration
         logger.exception("verification email crashed for member %s", member.id)
         result_error = f"{type(exc).__name__}: {exc}"
-        result_sent, backend = False, "unknown"
+        result_sent, backend, result_detail = False, "unknown", None
     else:
         result_error, result_sent, backend = result.error, result.sent, result.backend
+        result_detail = result.detail
 
     try:
         if result_sent:
-            record_event(db, EventType.EMAIL_SENT, member.id, {"backend": backend})
+            record_event(
+                db,
+                EventType.EMAIL_SENT,
+                member.id,
+                {"backend": backend, "provider_response": result_detail},
+            )
         else:
             record_event(db, EventType.EMAIL_FAILED, member.id, {"backend": backend, "error": result_error})
         db.commit()

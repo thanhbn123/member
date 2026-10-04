@@ -227,3 +227,60 @@ def test_known_settings_still_load(settings_env):
     assert settings.email_mode == "console"
     assert settings.brand_name == BRAND
     assert settings.verification_token_ttl_hours == TTL_HOURS
+
+
+def test_email_result_carries_the_provider_acceptance_line(monkeypatch):
+    """The audit trail must be able to quote Gmail's own 250 ... queue id for a delivery."""
+    from app.email import service as email_service
+    from app.email.service import EmailResult
+
+    assert EmailResult(True, "smtp").detail is None  # field is optional / backwards compatible
+
+    sent: list[dict] = []
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def ehlo(self):
+            return (250, b"ok")
+
+        def starttls(self):
+            return (220, b"go ahead")
+
+        def login(self, user, password):
+            return (235, b"ok")
+
+        def send_message(self, message):
+            sent.append({"to": message["To"], "subject": message["Subject"]})
+            return {message["To"]: (250, "2.0.0 OK  1730000000 abc123-gsmtp")}
+
+    for key, value in {
+        "EMAIL_MODE": "smtp",
+        "SMTP_HOST": "smtp.gmail.com",
+        "SMTP_PORT": "587",
+        "SMTP_TLS": "true",
+        "SMTP_USER": "owner@example.com",
+        "SMTP_PASSWORD": "app-password-value",
+        "SMTP_FROM": "owner@example.com",
+    }.items():
+        monkeypatch.setenv(key, value)
+    from app.config import reset_settings_cache
+
+    reset_settings_cache()
+    original = email_service.smtplib.SMTP
+    email_service.smtplib.SMTP = FakeSMTP
+    try:
+        result = email_service.send_email("recipient@example.com", "Subject", "body")
+    finally:
+        email_service.smtplib.SMTP = original
+
+    assert result.sent is True
+    assert result.detail and "250 2.0.0 OK" in result.detail and "gsmtp" in result.detail
+    assert sent and sent[0]["to"] == "recipient@example.com"
