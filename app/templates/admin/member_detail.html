@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}{{ member.full_name }} — Thành viên — {{ brand.name }}{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
+{% block nav %}
+<nav class="site-nav" aria-label="Điều hướng chính">
+  <a href="/admin/members">Thành viên</a>
+</nav>
+{% endblock %}
+
+{% block content %}
+<p class="breadcrumb"><a href="/admin/members">← Danh sách thành viên</a></p>
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">{{ member.full_name }}</h1>
+    <p class="page-subtitle">{{ member.email }}</p>
+  </div>
+  <span class="pill pill-{{ member.status }}">{{ member.status }}</span>
+</div>
+
+<section class="card">
+  <h2 class="section-title">Thông tin thành viên</h2>
+  <dl class="kv">
+    <dt>ID</dt>
+    <dd class="mono">{{ member.id }}</dd>
+    <dt>Họ và tên</dt>
+    <dd>{{ member.full_name }}</dd>
+    <dt>Email</dt>
+    <dd>{{ member.email }}</dd>
+    <dt>Số điện thoại</dt>
+    <dd>{{ member.phone or '—' }}</dd>
+    <dt>Công ty / tổ chức</dt>
+    <dd>{{ member.company or '—' }}</dd>
+    <dt>Trạng thái</dt>
+    <dd><span class="pill pill-{{ member.status }}">{{ member.status }}</span></dd>
+    <dt>Đồng ý nhận tin</dt>
+    <dd>{{ 'Có' if member.consent_marketing else 'Không' }}</dd>
+    <dt>Nguồn</dt>
+    <dd>{{ member.source or '—' }}</dd>
+    <dt>Ngày tạo</dt>
+    <dd>{{ member.created_at.strftime('%Y-%m-%d %H:%M') if member.created_at else '' }}</dd>
+    <dt>Cập nhật lần cuối</dt>
+    <dd>{{ member.updated_at.strftime('%Y-%m-%d %H:%M') if member.updated_at else '' }}</dd>
+    <dt>Xác minh email lúc</dt>
+    <dd>{{ member.email_verified_at.strftime('%Y-%m-%d %H:%M') if member.email_verified_at else '—' }}</dd>
+    <dt>Ghi chú</dt>
+    <dd>{{ member.notes or '—' }}</dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h2 class="section-title">Attribution</h2>
+  {% if attribution %}
+  <dl class="kv">
+    <dt>utm_source</dt>
+    <dd>{{ attribution.utm_source or '—' }}</dd>
+    <dt>utm_medium</dt>
+    <dd>{{ attribution.utm_medium or '—' }}</dd>
+    <dt>utm_campaign</dt>
+    <dd>{{ attribution.utm_campaign or '—' }}</dd>
+    <dt>utm_content</dt>
+    <dd>{{ attribution.utm_content or '—' }}</dd>
+    <dt>utm_term</dt>
+    <dd>{{ attribution.utm_term or '—' }}</dd>
+    <dt>landing_url</dt>
+    <dd class="break">{{ attribution.landing_url or '—' }}</dd>
+    <dt>referrer</dt>
+    <dd class="break">{{ attribution.referrer or '—' }}</dd>
+    <dt>fbp</dt>
+    <dd class="mono break">{{ attribution.fbp or '—' }}</dd>
+    <dt>fbc</dt>
+    <dd class="mono break">{{ attribution.fbc or '—' }}</dd>
+    <dt>user_agent</dt>
+    <dd class="break">{{ attribution.user_agent or '—' }}</dd>
+    <dt>Ghi nhận lúc</dt>
+    <dd>{{ attribution.created_at.strftime('%Y-%m-%d %H:%M') if attribution.created_at else '' }}</dd>
+  </dl>
+  {% else %}
+  <p class="muted">Không có dữ liệu attribution cho thành viên này.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2 class="section-title">Dòng sự kiện</h2>
+  {% if events %}
+  <ol class="timeline">
+    {% for e in events %}
+    <li class="timeline-item">
+      <span class="pill pill-event">{{ e.event_type }}</span>
+      <time class="timeline-time">{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '' }}</time>
+      {% if e.metadata_json %}
+      <pre class="json">{{ e.metadata_json | tojson(indent=2) }}</pre>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">Chưa có sự kiện nào được ghi nhận.</p>
+  {% endif %}
+</section>
+{% endblock %}

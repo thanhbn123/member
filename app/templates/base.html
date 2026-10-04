@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}{{ brand.name }}{% endblock %}</title>
+  {% if brand.tagline %}<meta name="description" content="{{ brand.tagline }}">{% endif %}
+  {# Brand colour is injected from configuration / environment - never hard-coded. #}
+  <style nonce="{{ csp_nonce }}">
+    :root {
+      --brand: {{ brand.primary_color }};
+    }
+  </style>
+  <link rel="stylesheet" href="/static/css/app.css">
+  {#
+    Optional client-side analytics. Nothing is rendered while the matching id is empty,
+    which is the default: GA4_MEASUREMENT_ID / META_PIXEL_ID are operator-controlled
+    configuration, never user input, so Jinja autoescape stays ON inside attributes and
+    JS string literals as defence in depth. Every inline script carries the per-request
+    CSP nonce; the CSP allow-list already covers these two hosts when configured.
+  #}
+  {% if ga4_measurement_id %}
+  <script async nonce="{{ csp_nonce }}" src="https://www.googletagmanager.com/gtag/js?id={{ ga4_measurement_id }}"></script>
+  <script nonce="{{ csp_nonce }}">
+    window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}
+    gtag('js',new Date());gtag('config','{{ ga4_measurement_id }}');
+  </script>
+  {% endif %}
+  {% if meta_pixel_id %}
+  <script nonce="{{ csp_nonce }}">
+    !function (f, b, e, v, n, t, s) {
+      if (f.fbq) return;
+      n = f.fbq = function () {
+        n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+      };
+      if (!f._fbq) f._fbq = n;
+      n.push = n; n.loaded = !0; n.version = '2.0'; n.queue = [];
+      t = b.createElement(e); t.async = !0; t.src = v;
+      s = b.getElementsByTagName(e)[0]; s.parentNode.insertBefore(t, s);
+    }(window, document, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init','{{ meta_pixel_id }}');fbq('track','PageView');
+  </script>
+  {# The noscript pixel is hidden by a stylesheet class: an inline HTML style attribute would
+     be blocked by the nonce based `style-src` policy (nonces do not cover style attributes). #}
+  <noscript><img class="pixel-noscript" height="1" width="1" src="https://www.facebook.com/tr?id={{ meta_pixel_id }}&ev=PageView&noscript=1" alt=""></noscript>
+  {% endif %}
+  {% block head_extra %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main">Bỏ qua tới nội dung chính</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="/">
+        {% if brand.logo_url %}
+        <img class="brand-logo" src="{{ brand.logo_url }}" alt="{{ brand.name }}" height="32">
+        {% endif %}
+        <span class="brand-text">
+          <span class="brand-name">{{ brand.name }}</span>
+          {% if brand.tagline %}<span class="brand-tagline">{{ brand.tagline }}</span>{% endif %}
+        </span>
+      </a>
+      {% block nav %}
+      {% set current_path = request.url.path if request and request.url else '' %}
+      {% if current_path != '/register' %}
+      <nav class="site-nav" aria-label="Điều hướng chính">
+        <a href="/register">Đăng ký</a>
+      </nav>
+      {% endif %}
+      {% endblock %}
+    </div>
+  </header>
+
+  <main id="main" class="wrap main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p class="copyright">&copy; {{ year }} {{ brand.name }}</p>
+      {% if brand.support_email %}
+      <p class="support">Cần hỗ trợ? <a href="mailto:{{ brand.support_email }}">{{ brand.support_email }}</a></p>
+      {% endif %}
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

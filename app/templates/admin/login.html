@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Đăng nhập quản trị — {{ brand.name }}{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
+{% block nav %}
+<nav class="site-nav" aria-label="Điều hướng chính">
+  <a href="/">Trang chủ</a>
+</nav>
+{% endblock %}
+
+{% block content %}
+<section class="card card-narrow">
+  <h1 class="page-title">Đăng nhập quản trị</h1>
+  <p class="page-subtitle">Khu vực dành cho quản trị viên của {{ brand.name }}.</p>
+
+  {% if error %}
+  <div class="alert alert-error" role="alert">{{ error }}</div>
+  {% endif %}
+  {% if admin_configured is defined and not admin_configured %}
+  <div class="alert alert-error" role="alert">
+    Tài khoản quản trị chưa được cấu hình trên môi trường này.
+  </div>
+  {% endif %}
+
+  <form method="post" action="/admin/login" class="form" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="field">
+      <label for="email">Email quản trị</label>
+      <input type="email" id="email" name="email" required maxlength="320"
+             autocomplete="username" inputmode="email" autofocus
+             {% if admin_email_hint %}placeholder="{{ admin_email_hint }}"{% endif %}>
+      {% if admin_email_hint %}<p class="hint">Gợi ý: {{ admin_email_hint }}</p>{% endif %}
+    </div>
+
+    <div class="field">
+      <label for="password">Mật khẩu</label>
+      <input type="password" id="password" name="password" required
+             autocomplete="current-password">
+    </div>
+
+    <button type="submit" class="btn btn-primary btn-block">Đăng nhập</button>
+  </form>
+</section>
+{% endblock %}

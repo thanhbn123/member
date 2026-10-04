@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% set flt = filters|default({}, true) %}
+{% set pp = per_page|default(25) %}
+{% set pp_choices = per_page_choices|default([25, 50, 100], true) %}
+{% set cur = page|default(1) %}
+{% set total_pages = pages|default(1) %}
+{% set total_count = total|default(0) %}
+{% set sources = utm_sources|default([], true) %}
+
+{% block title %}Thành viên — {{ brand.name }}{% endblock %}
+{% block head_extra %}<meta name="robots" content="noindex, nofollow">{% endblock %}
+{% block nav %}
+<nav class="site-nav" aria-label="Điều hướng chính">
+  <a href="/admin/members" aria-current="page">Thành viên</a>
+</nav>
+{% endblock %}
+
+{% block content %}
+{# Current filters, url-encoded once; page/sort are position params, never carried over. #}
+{% set filter_parts = [] %}
+{% for key, value in flt.items() if key not in ['page', 'per_page', 'sort'] and value %}
+{% set _ = filter_parts.append(key ~ '=' ~ (value|string|urlencode)) %}
+{% endfor %}
+{% set filter_query = filter_parts|join('&') %}
+{% set csv_href = '/admin/members.csv' + ('?' ~ filter_query if filter_query else '') %}
+{% set page_href = '/admin/members?' ~ ((filter_query ~ '&') if filter_query else '') ~ 'per_page=' ~ pp ~ '&page=' %}
+
+<div class="page-head">
+  <div>
+    <h1 class="page-title">Thành viên</h1>
+    <p class="page-subtitle">Tổng cộng {{ total_count }} thành viên.</p>
+  </div>
+  <div class="toolbar">
+    {% if admin_email %}<span class="muted">{{ admin_email }}</span>{% endif %}
+    <a class="btn btn-ghost" href="{{ csv_href }}">Xuất CSV</a>
+    <form method="post" action="/admin/logout" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token|default('') }}">
+      <button type="submit" class="btn btn-ghost">Đăng xuất</button>
+    </form>
+  </div>
+</div>
+
+<form method="get" action="/admin/members" class="card filter-bar" role="search">
+  <div class="filter-grid">
+    <div class="field">
+      <label for="q">Tìm kiếm</label>
+      <input type="search" id="q" name="q" value="{{ flt.get('q', '') }}"
+             placeholder="Tên, email, công ty, số điện thoại" maxlength="200">
+    </div>
+    <div class="field">
+      <label for="status">Trạng thái</label>
+      <select id="status" name="status">
+        <option value="">Tất cả</option>
+        {% for s in statuses|default([]) %}
+        <option value="{{ s }}" {% if flt.get('status') == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="utm_source">UTM source</label>
+      <input type="text" id="utm_source" name="utm_source" list="utm_sources"
+             value="{{ flt.get('utm_source', '') }}" maxlength="255">
+      {% if sources %}
+      <datalist id="utm_sources">
+        {% for source in sources %}<option value="{{ source }}"></option>{% endfor %}
+      </datalist>
+      {% endif %}
+    </div>
+    <div class="field">
+      <label for="date_from">Từ ngày</label>
+      <input type="date" id="date_from" name="date_from" value="{{ flt.get('date_from', '') }}">
+    </div>
+    <div class="field">
+      <label for="date_to">Đến ngày</label>
+      <input type="date" id="date_to" name="date_to" value="{{ flt.get('date_to', '') }}">
+    </div>
+    <div class="field">
+      <label for="per_page">Mỗi trang</label>
+      <select id="per_page" name="per_page">
+        {% for n in pp_choices %}
+        <option value="{{ n }}" {% if pp == n %}selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="filter-actions">
+    <button type="submit" class="btn btn-primary">Lọc</button>
+    <a class="btn btn-ghost" href="/admin/members">Xoá lọc</a>
+  </div>
+</form>
+
+<div class="table-wrap card">
+  <table class="table">
+    <caption class="sr-only">Danh sách thành viên đã đăng ký</caption>
+    <thead>
+      <tr>
+        <th scope="col">Họ tên</th>
+        <th scope="col">Email</th>
+        <th scope="col">Điện thoại</th>
+        <th scope="col">Công ty</th>
+        <th scope="col">Trạng thái</th>
+        <th scope="col">UTM source</th>
+        <th scope="col">Ngày tạo</th>
+        <th scope="col"><span class="sr-only">Chi tiết</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in members|default([]) %}
+      <tr>
+        <td><a href="/admin/members/{{ m.id }}">{{ m.full_name }}</a></td>
+        <td class="nowrap">{{ m.email }}</td>
+        <td class="nowrap">{{ m.phone or '' }}</td>
+        <td>{{ m.company or '' }}</td>
+        <td><span class="pill pill-{{ m.status }}">{{ m.status }}</span></td>
+        <td>{{ m.attribution.utm_source if m.attribution else '' }}</td>
+        <td class="nowrap">{{ m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else '' }}</td>
+        <td><a href="/admin/members/{{ m.id }}">Chi tiết</a></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="empty">Không có thành viên nào khớp bộ lọc.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="Phân trang">
+  <a class="page-link {{ 'is-disabled' if cur <= 1 else '' }}"
+     href="{{ page_href }}{{ cur - 1 if cur > 1 else 1 }}"
+     {% if cur <= 1 %}aria-disabled="true" tabindex="-1"{% endif %}>‹ Trước</a>
+
+  {% set first_shown = [1, cur - 2]|max %}
+  {% set last_shown = [total_pages, cur + 2]|min %}
+
+  {% if first_shown > 1 %}
+  <a class="page-link" href="{{ page_href }}1">1</a>
+  {% if first_shown > 2 %}<span class="page-gap">…</span>{% endif %}
+  {% endif %}
+
+  {% for p in range(first_shown, last_shown + 1) %}
+  <a class="page-link {{ 'is-current' if p == cur else '' }}"
+     href="{{ page_href }}{{ p }}"
+     {% if p == cur %}aria-current="page"{% endif %}>{{ p }}</a>
+  {% endfor %}
+
+  {% if last_shown < total_pages %}
+  {% if last_shown < total_pages - 1 %}<span class="page-gap">…</span>{% endif %}
+  <a class="page-link" href="{{ page_href }}{{ total_pages }}">{{ total_pages }}</a>
+  {% endif %}
+
+  <a class="page-link {{ 'is-disabled' if cur >= total_pages else '' }}"
+     href="{{ page_href }}{{ cur + 1 if cur < total_pages else total_pages }}"
+     {% if cur >= total_pages %}aria-disabled="true" tabindex="-1"{% endif %}>Sau ›</a>
+
+  <span class="page-info">Trang {{ cur }} / {{ total_pages }}</span>
+</nav>
+{% endif %}
+{% endblock %}
