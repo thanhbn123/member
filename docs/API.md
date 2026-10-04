@@ -126,7 +126,7 @@ bucket and `ip_hash`.
 
 | Method | Path | Surface | Auth | Success |
 |---|---|---|---|---|
-| `GET` | `/` | HTML | — | `307` → `/register` |
+| `GET` | `/` | HTML | — | `200` landing page |
 | `GET` | `/health` | probe | — | `200` plain JSON |
 | `GET` | `/register` | HTML | — | `200` form |
 | `POST` | `/register` | HTML | CSRF | `303` → `/check-email` |
@@ -141,14 +141,17 @@ bucket and `ip_hash`.
 | `GET` | `/api/v1/members/{member_id}` | JSON API | `X-API-Key`* | `200` |
 | `GET` | `/api/v1/members?email=…` | JSON API | `X-API-Key`* | `200` |
 | `POST` | `/api/v1/members/{member_id}/resend-verification` | JSON API | `X-API-Key`* | `200` |
-| `GET` | `/admin` | admin | — | `303` → `/admin/members` (or `/admin/login`) |
-| `GET` | `/admin/` | admin | — | `303` → `/admin/members` (or `/admin/login`) |
-| `GET` | `/admin/login` | admin | — | `200` (or `303` when already logged in) |
-| `POST` | `/admin/login` | admin | CSRF | `303` → `/admin/members` |
+| `GET` | `/admin` | admin | — | `303` → `/admin/dashboard` (or `/admin/login`) |
+| `GET` | `/admin/` | admin | — | `303` → `/admin/dashboard` (or `/admin/login`) |
+| `GET` | `/admin/login` | admin | — | `200` (or `303` → `/admin/dashboard` when already logged in) |
+| `POST` | `/admin/login` | admin | CSRF | `303` → `/admin/dashboard` |
 | `POST` | `/admin/logout` | admin | CSRF | `303` → `/admin/login` |
+| `GET` | `/admin/dashboard` | admin | session | `200` |
 | `GET` | `/admin/members` | admin | session | `200` |
 | `GET` | `/admin/members.csv` | admin | session | `200` `text/csv` |
 | `GET` | `/admin/members/{member_id}` | admin | session | `200` (or `404` page) |
+| `POST` | `/admin/members/{member_id}` | admin | session + CSRF | `303` → member detail (`?msg=`) |
+| `POST` | `/admin/members/{member_id}/resend-verification` | admin | session + CSRF | `303` → `next` (`?msg=`) |
 
 \* required when `MEMBER_API_KEY` is set, and `MEMBER_API_KEY` is **mandatory in production** (the
 app refuses to start otherwise — §0.2).
@@ -546,7 +549,7 @@ escape the normaliser as a `500`):
 ```
 
 > `GET /api/v1/members` without the `email` parameter is a `422 validation_error`, not a list
-> endpoint. There is no public paginated member list — use the admin CSV (§5.3) for bulk exports.
+> endpoint. There is no public paginated member list — use the admin CSV (§5.5) for bulk exports.
 
 ### 3.4 `POST /api/v1/members/{member_id}/resend-verification`
 
@@ -640,10 +643,27 @@ Codes listed in `docs/INTERNAL_CONTRACT.md` (`email_already_verified`, `registra
 
 ## 4. Browser surface (HTML)
 
-All HTML routes render Jinja2 templates (`app/templates/`), are driven by `BRAND_*` configuration
-and are excluded from the OpenAPI schema.
+All HTML routes render Jinja2 templates (`app/templates/`), are driven by `BRAND_*` / `LANDING_*`
+configuration and are excluded from the OpenAPI schema.
 
-### 4.1 `GET /` → `307 Temporary Redirect` to `/register`
+### 4.1 `GET /` → `200` landing page
+
+The public landing page (`app/templates/landing.html` + `app/static/css/landing.css`), rendered from
+configuration — every string, benefit, contact detail and link comes from `LANDING_*` / `BRAND_*`
+(README §4.2 and §4.12). With no configuration at all it still renders a complete brand-neutral page.
+
+| Section | Source | Notes |
+|---|---|---|
+| Hero | `LANDING_HERO_TITLE` (falls back to `BRAND_TAGLINE`, then the brand name), `LANDING_HERO_SUBTITLE`, `LANDING_HERO_IMAGE_URL` | The hero image is rendered only for `http(s)` URLs; the text layout is designed to work without one. |
+| Trust bullets + benefits grid | Fixed Vietnamese bullets; up to **6** `icon\|title\|description` cards from `LANDING_BENEFITS` (a generic trio when unset or fully malformed) | Malformed items are dropped silently; text is capped at icon 8 / title 80 / description 240 chars. |
+| Registration form (anchor `#dang-ky`) | The **same** form as §4.2 | Identical fields, `action="/register"`, `csrf_token` and the hidden UTM / `landing_url` / `referrer` / `fbp` / `fbc` inputs — a conversion here is indistinguishable from one on `/register`. With `LANDING_SHOW_FORM=false` no form is rendered and the header/hero CTA links to `/register` instead. |
+| 3-step strip + FAQ | Fixed Vietnamese copy | — |
+| Contact band | `BRAND_PHONE` (rendered as a digits-only `tel:` link when it holds ≥ 6 digits), `BRAND_ADDRESS`, `BRAND_FACEBOOK_URL`, `BRAND_ZALO_URL` | Each field is hidden while empty; URLs are emitted only when they are real `http(s)` URLs (`javascript:`/`data:`/scheme-less values are ignored). |
+
+The palette is **configuration only** (`BRAND_PRIMARY_COLOR` injected as the `--brand` CSS variable;
+`landing.css` derives the rest), and the page carries no inline `style="…"` attribute and no inline
+`<script>` without the per-request CSP nonce. `GET /` no longer redirects; `GET /register` (§4.2) is
+unchanged and remains the direct ad-link target.
 
 ### 4.2 `GET /register` → `200`
 
@@ -734,8 +754,8 @@ though it never contains secrets.
 
 ### 4.9 `/static/*`
 
-Static assets: `css/app.css`, `js/register.js` (plus the `.pixel-noscript` helper class used by the
-optional Meta Pixel `<noscript>` image).
+Static assets: `css/app.css`, `css/landing.css` (landing page only), `js/register.js` (plus the
+`.pixel-noscript` helper class used by the optional Meta Pixel `<noscript>` image).
 
 ---
 
@@ -746,13 +766,14 @@ Requires `ADMIN_EMAIL` + `ADMIN_PASSWORD_HASH`. Anonymous requests to any `/admi
 
 ### 5.0 `GET /admin`, `GET /admin/` → `303`
 
-Convenience entry points with no body of their own: logged-in sessions are redirected to
-`/admin/members`, anonymous visitors to `/admin/login` (both `303 See Other`).
+Convenience entry points with no body of their own: a logged-in session is redirected to
+`/admin/dashboard`, an anonymous visitor to `/admin/login` (both `303 See Other`).
 
 ### 5.1 `GET /admin/login` → `200` (or `303` when already logged in)
 
 Renders the login form (CSRF-protected). Shows a masked hint of the configured admin address
-(`a***@example.com`) and hides the form when the admin UI is not configured.
+(`a***@example.com`) and hides the form when the admin UI is not configured. An authenticated
+session is redirected to `/admin/dashboard` (`303`).
 
 ### 5.2 `POST /admin/login` → `303` or `401`
 
@@ -762,16 +783,32 @@ Renders the login form (CSRF-protected). Shows a masked hint of the configured a
 |---|---|---|
 | `csrf_token` | **yes** | Must equal the `member_csrf` cookie; otherwise `403`. |
 | `email` | **yes** | Compared case-insensitively with `ADMIN_EMAIL`. |
-| `password` | **yes** | Verified against `ADMIN_PASSWORD_HASH` with scrypt + `hmac.compare_digest`. |
+| `password` | **yes** | Verified against `ADMIN_PASSWORD_HASH` with scrypt + `hmac.compare_digest`. A non-matching address is still verified against a dummy hash, so response timing does not reveal a valid admin address. |
 
 | Response | Meaning |
 |---|---|
-| `303 See Other` → `/admin/members` | Login succeeded; the session is marked authenticated and a `LOGIN` event (`success: true`, `ip_hash`) is recorded. |
+| `303 See Other` → `/admin/dashboard` | Login succeeded; the session is rotated (fixation defence), marked authenticated and a `LOGIN` event (`success: true`, `ip_hash`) is recorded. |
 | `401 Unauthorized` | Wrong credentials; the form is re-rendered and a `LOGIN` event (`success: false`, `actor`, `ip_hash`) is recorded. |
 | `403 Forbidden` | CSRF failure. |
 | `429 Too Many Requests` | Login rate limit exceeded. |
 
-### 5.3 `GET /admin/members` → `200`
+### 5.3 `GET /admin/dashboard` → `200`
+
+The admin landing page (and the target of a successful login). Everything is computed in
+`app/services/admin.py`, so the same queries run on SQLite and PostgreSQL.
+
+| Block | Content |
+|---|---|
+| Stat cards | `tổng thành viên`, `chờ xác minh`, `đã xác minh`, `tỷ lệ xác minh` (verified / total, one decimal, `0.0%` when empty), `đăng ký 7 ngày qua` (rolling 7-day window), `đồng ý nhận tin`. The `đã huỷ đăng ký` and `bị chặn` cards are rendered **only when their count is non-zero**. |
+| 14-day chart | Registrations per UTC day, zero-filled to exactly 14 bars, oldest first. Bar height is a **decile CSS class** (`.bar-0` … `.bar-100`) — never an inline `style` attribute, so the nonce CSP stays intact. |
+| Top channels | Top **5** `utm_source` and top **5** `utm_campaign` values with counts and percentage share; a missing (`NULL`) value is a real bucket rendered as `không xác định`. Ranking is finished in Python (unknown last, then alphabetical) because SQLite and PostgreSQL order `NULL` differently. |
+| Recent members | The **10** most recent members (same row shape as §5.4) with a per-row `Chi tiết` link and a `Gửi lại xác minh` form for `pending` members. |
+| Quick links | Member list (`/admin/members`), CSV export (`/admin/members.csv`) and the public registration page (`/register`, opened in a new tab). |
+
+A `?msg=<code>` flash from a previous POST is resolved through the allow-list in §5.7/§5.8; an
+unknown code renders no alert.
+
+### 5.4 `GET /admin/members` → `200`
 
 Paginated, filterable member list. Every filter is also passed through to the CSV export.
 
@@ -791,7 +828,7 @@ Paginated, filterable member list. Every filter is also passed through to the CS
 * The filter dropdown for `utm_source` is populated from the distinct non-null values present in
   `member_attribution` (top 100 by member count).
 
-### 5.4 `GET /admin/members.csv` → `200` `text/csv; charset=utf-8`
+### 5.5 `GET /admin/members.csv` → `200` `text/csv; charset=utf-8`
 
 Streams **all** members matching the current filters, ignoring pagination: the handler forces
 `per_page = 100000` and `page = 1`, so `page` and `per_page` in the query string are accepted but
@@ -804,7 +841,7 @@ have no effect on the exported rows.
 | `X-Total-Rows` | number of exported rows |
 | `Cache-Control` | `no-store` |
 
-**Filters:** identical to §5.3 (`q`, `status`, `utm_source`, `date_from`, `date_to`). The admin UI’s
+**Filters:** identical to §5.4 (`q`, `status`, `utm_source`, `date_from`, `date_to`). The admin UI’s
 “Xuất CSV” link carries the active filters only — never `page`/`per_page`.
 
 **Columns (in order):**
@@ -845,13 +882,66 @@ id,full_name,email,phone,company,status,consent_marketing,email_verified_at,crea
 531ba8da-b22d-41c0-8e0f-46c264d6fe27,Lê Văn C,c@example.com,0912345678,,pending,true,,2026-10-04 06:23:50,web_form,,,,,,http://testserver/register,,,
 ```
 
-### 5.5 `GET /admin/members/{member_id}` → `200` or `404` page
+### 5.6 `GET /admin/members/{member_id}` → `200` or `404` page
 
 Member detail: identity, status, consent, attribution (`fbp`, `fbc`, UTM, landing URL, referrer,
-`ip_hash`) and the **200 most recent** events for that member, newest first. An unknown member
-renders the error template with `404` (HTML, not the JSON envelope).
+`ip_hash`) and the **200 most recent** events for that member, newest first. The page also hosts the
+management form (§5.7) and the resend action (§5.8). An unknown member renders the error template
+with `404` (HTML, not the JSON envelope).
 
-### 5.6 `POST /admin/logout` → `303` to `/admin/login`
+### 5.7 `POST /admin/members/{member_id}` → `303` to the member detail (`?msg=…`)
+
+The member management form. CSRF + admin session required (an anonymous caller is redirected to
+`/admin/login`). POST/redirect/GET: every outcome is a `303` back to
+`/admin/members/{id}?msg=<code>`, and the code is resolved through an allow-list — an unknown `msg`
+renders no alert and raw query text never reaches the HTML.
+
+| Form field | Required | Notes |
+|---|---|---|
+| `csrf_token` | **yes** | Must equal the `member_csrf` cookie; otherwise `403`. |
+| `status` | **yes** | One of `pending` \| `verified` \| `unsubscribed` \| `blocked` (trimmed, case-insensitive). Anything else → `msg=invalid_status`, **nothing is written**. |
+| `notes` | no | Internal note, stored trimmed; more than **2000** chars → `msg=notes_too_long`, **nothing is written**. Empty means “no note” (`NULL`). |
+| `consent_marketing` | no | Absent/unchecked means **false** (browsers do not submit an unchecked checkbox). |
+
+What is written:
+
+* only the fields that actually changed, plus `updated_at`;
+* exactly **one** `MEMBER_UPDATED` event carries the diff:
+  `{"actor": "<admin email>", "changed": {"status": ["pending", "verified"], "notes": [null, "…"], "consent_marketing": [false, true]}}`
+  — `changed` contains only the fields that moved;
+* a submission that changes nothing writes **no row and no event** (`msg=no_change`);
+* an invalid submission (`invalid_status`, `notes_too_long`) writes nothing at all.
+
+> **Setting `status=verified` by hand does not set `email_verified_at`.** That timestamp is evidence
+> that the member clicked the emailed one-time link, so the manual edit path deliberately leaves it
+> untouched — and `Member.is_verified` (used by `/welcome` and the API) requires both. Use this form
+> to correct data, not to fake a verification; use §5.8 when the member should actually verify.
+
+### 5.8 `POST /admin/members/{member_id}/resend-verification` → `303` to `next` (`?msg=…`)
+
+CSRF + admin session required. Re-issues the verification email for a member.
+
+| Form field | Required | Notes |
+|---|---|---|
+| `csrf_token` | **yes** | Must equal the `member_csrf` cookie; otherwise `403`. |
+| `next` | no | Where to bounce back to; **allow-listed** to `/admin/dashboard` or `/admin/members` (exact match). Anything else — including an absolute URL — silently falls back to `/admin/members`. |
+
+| Member state | Outcome |
+|---|---|
+| `pending` | The email is re-sent (`verification_sent`), or `error` when the backend fails. |
+| `verified` | Not re-sent: `already_verified`. |
+| `unsubscribed` / `blocked` | Not re-sent: `not_pending` — those members asked us to stop sending email. |
+| unknown id | `member_not_found`. |
+
+Unlike the JSON API equivalent (which carries a per-member cap of 3 per hour, §3.4), this admin
+action is not rate-capped: it requires an authenticated admin session + CSRF token, and never
+re-sends to a member who is not `pending`.
+
+`?msg=` codes (both POSTs): `verification_sent`, `already_verified`, `not_pending`, `member_updated`,
+`no_change`, `invalid_status`, `notes_too_long`, `error`, `member_not_found`. Anything else renders no
+alert.
+
+### 5.9 `POST /admin/logout` → `303` to `/admin/login`
 
 Clears the session. CSRF-protected.
 
@@ -928,6 +1018,7 @@ a `Deprecation`/`Sunset` response header on the old paths.
 | Version | Date | Changes |
 |---|---|---|
 | `0.1.0` / API `v1` | 2026-10-04 | Initial frozen surface: `/api/v1/health`, `POST /api/v1/members/register` (201/200), `GET /api/v1/members/{member_id}`, `GET /api/v1/members?email=`, `POST /api/v1/members/{member_id}/resend-verification`; envelope + error-code table; optional `X-API-Key`; per-IP rate limits; signed `member.verified` webhook; opt-in Meta Conversions API; admin UI with CSV export; single migration `0001_initial`. |
+| HTML surface (unversioned) | 2026-10-04 | `GET /` renders the configurable landing page instead of a `307` redirect to `/register` (the form, its fields and `POST /register` are unchanged); admin dashboard `GET /admin/dashboard` — the post-login landing page, with `/admin` and `/admin/` now redirecting there — carries the counters, a 14-day decile-class chart, top-5 UTM sources/campaigns and the 10 most recent members; member management `POST /admin/members/{member_id}` (status / notes / consent, audited as one `MEMBER_UPDATED` event) and `POST /admin/members/{member_id}/resend-verification` (pending members only, allow-listed `?msg=` and `next=`). `/api/v1` is unchanged. |
 
 ---
 

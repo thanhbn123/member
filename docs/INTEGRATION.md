@@ -1,8 +1,10 @@
 # INTEGRATION.md — plugging MEMBER into VIPORDER / VIP GROUP / VIP AI / Marketing Hub
 
-This document describes how the MEMBER service is meant to be wired into the wider VIP ecosystem
-**later** — when a real deployment is requested. Nothing here is deployed today: this milestone is
-local-only (see [`DEPLOYMENT.md`](DEPLOYMENT.md)).
+This document describes how the MEMBER service is wired into the wider VIP ecosystem. The service is
+**live** for the first tenant at <https://member.quangkhoiwellnessretreat.com> (see
+[`DEPLOYMENT.md`](DEPLOYMENT.md) and the deployment runbook [`../deploy/README.md`](../deploy/README.md));
+the integration styles below are what a second tenant (VIPORDER / VIP GROUP / VIP AI / Marketing Hub)
+uses when its own deployment is created.
 
 MEMBER owns exactly one domain: **member registration and verification**. It is not a CRM, not a
 customer database of record, and not an order system. Everything below respects that boundary.
@@ -342,11 +344,15 @@ BRAND_TAGLINE=Đăng ký thành viên VIPORDER
 BRAND_PRIMARY_COLOR=#e11d48
 BRAND_LOGO_URL=https://cdn.viporder.vn/logo.svg
 BRAND_SUPPORT_EMAIL=support@viporder.vn
+BRAND_PHONE=+84 90 000 0000
+LANDING_HERO_TITLE=Thành viên VIPORDER
+LANDING_CTA_TEXT=Đăng ký ngay
+LANDING_SHOW_FORM=true
 
 SECRET_KEY=<unique per deployment>
 IP_HASH_SALT=<unique per deployment>
 ADMIN_EMAIL=ops@viporder.vn
-ADMIN_PASSWORD_HASH=<scrypt hash>
+ADMIN_PASSWORD_HASH=<scrypt:n:r:p:salt:digest — printed by python -m app.cli hash-password>
 MEMBER_API_KEY=<unique per deployment>
 MEMBER_VERIFIED_WEBHOOK_URL=https://api.viporder.vn/hooks/member-verified
 MEMBER_VERIFIED_WEBHOOK_SECRET=<unique per deployment>
@@ -362,12 +368,23 @@ wrong value produces links that point at the wrong host.
 
 ### 5.2 Sequence — hosted page (link, redirect or brand subdomain)
 
+There are **two public entry points**, both white-labelled and both POSTing to the same `/register`:
+
+* `GET /` — the configurable **landing page** (hero, benefits, 3-step strip, FAQ, contact band) with
+  the registration form embedded in the page (`LANDING_SHOW_FORM=true`, anchor `#dang-ky`). This is
+  the page a brand site should link to when it wants the full pitch; every word, contact detail and
+  link comes from `LANDING_*` / `BRAND_*` (see README §4.12).
+* `GET /register` — the **standalone form**, unchanged and still the direct target for ad links and
+  existing funnels. With `LANDING_SHOW_FORM=false` the landing page renders no form and its CTAs
+  point here instead.
+
 ```
 Visitor                Brand site              MEMBER (white-labelled)        VIPORDER
    │ click "Đăng ký"       │                          │                          │
    │───────────────────────▶│ 302/redirect to          │                          │
-   │                        │ PUBLIC_BASE_URL/register │                          │
-   │──────────────────────────────────────────────────▶│ GET /register            │
+   │                        │ PUBLIC_BASE_URL/         │                          │
+   │                        │   (landing) or /register │                          │
+   │──────────────────────────────────────────────────▶│ GET / (or /register)     │
    │                        │                          │ (brand colours/logo,     │
    │                        │                          │  CSRF cookie)            │
    │  form POST /register   │                          │                          │
@@ -522,7 +539,7 @@ POST /api/v1/members/register
 
 ---
 
-## 9. Rollout checklist (when the group decides to deploy)
+## 9. Rollout checklist (per new tenant)
 
 1. Decide the tenant list and their hostnames (`members.<brand>`), then create the deployments per
    [`DEPLOYMENT.md`](DEPLOYMENT.md) — one database, one `.env`, one `SECRET_KEY`/`IP_HASH_SALT` each.

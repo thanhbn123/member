@@ -2,10 +2,22 @@
 
 Production notes for the standalone member service (FastAPI + SQLAlchemy 2.0 + Alembic).
 
-> **Status of this milestone:** the project is **NOT deployed to any VPS** (no server, no
-> domain, no systemd unit is installed anywhere). Everything below is the reference recipe
-> to be used when a deployment is actually requested. Local development and CI use SQLite;
-> PostgreSQL is the only supported production database.
+> **Status: the service is LIVE** at <https://member.quangkhoiwellnessretreat.com> (VPS
+> `160.22.170.20`). The running deployment is the **Docker Compose stack** in `/srv/member`
+> documented in [`../deploy/README.md`](../deploy/README.md): a non-root app container, PostgreSQL 16
+> in its own container, a temporary internal SMTP sink (`EMAIL_MODE=smtp`), a **shared Caddy**
+> reverse proxy terminating Let’s Encrypt TLS, every published port bound to loopback,
+> `MEMBER_API_KEY` set and the admin UI enabled. The production acceptance run (**34 checks over
+> HTTPS**) covered real delivery through the configured SMTP backend, admin login, CSV export, the
+> API with the production key, the non-root container and the loopback-only ports.
+>
+> **Honest caveats:** until the Gmail credentials are configured, member mail is captured by the sink
+> and **members do not receive real email**; Meta stays disabled until a pixel id + access token are
+> provided.
+>
+> The sections below are the **host-level reference recipe** (systemd + nginx/TLS + a local
+> PostgreSQL): keep them for a bare-metal/VM install or as a fallback. For the deployment that
+> actually runs, follow [`../deploy/README.md`](../deploy/README.md).
 
 ---
 
@@ -63,9 +75,18 @@ these hold (the traceback lists every failing condition):
 | `SMTP_HOST` | non-empty when `EMAIL_MODE=smtp` |
 | `DATABASE_URL` | must **not** be SQLite: `postgresql+psycopg://…` (see above) |
 | `PUBLIC_BASE_URL` | non-empty and starting with **`https://`** — used in verification links and cookies |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | optional pair, but when the admin UI is enabled (both non-empty) the hash must **not** be a placeholder; leaving either empty disables the admin UI instead of blocking startup |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` | optional pair, but when the admin UI is enabled (both non-empty) the hash must **not** be a placeholder and must be **well-formed**; leaving either empty disables the admin UI instead of blocking startup |
 
-**Strongly recommended:** `BRAND_*`, `SMTP_USER`/`SMTP_PASSWORD`/`SMTP_TLS`/`SMTP_PORT`/`SMTP_FROM`,
+> **`ADMIN_PASSWORD_HASH` encoding.** Generate it with `python -m app.cli hash-password` and paste the
+> value **exactly as printed**: `scrypt:<n>:<r>:<p>:<salt_b64>:<digest_b64>` — colon separated, **no
+> `$`**. The legacy `$`-separated form is still *verified* (`verify_password` accepts both), but it
+> must not be used for new deployments: Docker Compose interpolates `$` inside `env_file` values
+> (`$1`, `$16384` …) and a shell `source` expands it, so the hash silently loses fields and admin
+> login fails — this happened in production. A malformed hash is refused at startup when
+> `APP_ENV=production` and `ADMIN_EMAIL` is set.
+
+**Strongly recommended:** `BRAND_*`, `LANDING_*` (landing-page copy, CTA and form toggle — README
+§4.12), `SMTP_USER`/`SMTP_PASSWORD`/`SMTP_TLS`/`SMTP_PORT`/`SMTP_FROM`,
 `TRUSTED_PROXY_HEADERS=true` (only behind exactly one trusted proxy — §6),
 `SECURITY_HEADERS_ENABLED=true`, `CSRF_ENABLED=true`, `GA4_MEASUREMENT_ID`, `META_*`,
 `MEMBER_VERIFIED_WEBHOOK_*`.
@@ -80,6 +101,10 @@ python -c "from app.security import hash_password; print(hash_password('…'))" 
 ```
 
 ## 4. Release procedure
+
+This is the systemd/VPS variant. For the live Docker Compose stack the equivalent release is
+`git pull --ff-only` + `docker compose … up -d --build` — see
+[`../deploy/README.md`](../deploy/README.md) §6 (updates, backups, rollback).
 
 ```bash
 cd /srv/member

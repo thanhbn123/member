@@ -10,15 +10,26 @@ purely through environment variables — no customer name, colour, logo, domain 
 hard-coded anywhere in `app/` — so one deployment can serve exactly one brand and be cloned per
 tenant.
 
-**Status: MVP, local acceptance passed.** `python scripts/acceptance.py` runs the 15-step harness
-(migrations → real uvicorn server → the full HTTP registration/verification/admin/API flow →
-`pytest` → secret scan) and reports `LOCAL ACCEPTANCE: 15/15 steps passed` on a local SQLite
-database, and the same 15 steps pass with `--database-url postgresql+psycopg://…` against a real
-PostgreSQL 16 instance (the whole pytest suite also passes with
-`TEST_DATABASE_URL=postgresql+psycopg://…`, 246 tests on both engines at the time of writing). **This milestone is
-local-only: nothing is deployed to a VPS** — no server, domain, systemd unit or production
-database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the recipe to follow
-*when* a deployment is requested.
+**Status: MVP, deployed.** The service is **live at <https://member.quangkhoiwellnessretreat.com>**:
+a Docker Compose stack in `/srv/member` on a VPS (`160.22.170.20`) behind a **shared Caddy** reverse
+proxy (Let's Encrypt TLS), with PostgreSQL 16 in its own container, the app container running as a
+**non-root** user and every published port bound to loopback, `EMAIL_MODE=smtp` pointed at a
+temporary internal SMTP sink, `MEMBER_API_KEY` set and the admin UI enabled. The production runbook
+(host layout, env files, Compose, Caddy vhost, backups, rollback) is
+[`deploy/README.md`](deploy/README.md).
+
+Local acceptance still passes: `python scripts/acceptance.py` runs the 16-step harness
+(migrations → real uvicorn server → the full HTTP registration/verification/admin/dashboard flow →
+`pytest` → secret scan) and reports `LOCAL ACCEPTANCE: 16/16 steps passed` on SQLite, and the same
+16 steps pass with `--database-url postgresql+psycopg://…` against a real PostgreSQL 16 instance.
+On the live server, `scripts/production_acceptance.sh` runs the **34-check production acceptance**
+over HTTPS against the deployed domain — real registration, real delivery through the configured
+SMTP backend (read back from the sink), the verification link and its single use, the database and
+audit trail, admin login + dashboard + member management + CSV export, the API with the production
+`MEMBER_API_KEY` (and 401 without it), and hosting hygiene (non-root container, loopback-only
+ports). The pytest suite is **246 tests**, green on SQLite and PostgreSQL. **Honest caveats:**
+until the Gmail credentials are configured, the SMTP sink captures member mail but **members do
+not receive real email yet**; Meta is **disabled** until a pixel id + access token are provided.
 
 ---
 
@@ -47,13 +58,21 @@ database exists yet. Read [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) as the reci
   query string, cookies and headers, and those sources always win.
 * **Events audit trail** — every lifecycle step is written to `member_events`
   (`REGISTER_STARTED`, `REGISTER_COMPLETED`, `EMAIL_SENT`, `EMAIL_FAILED`, `EMAIL_VERIFIED`,
-  `LOGIN`, `EXPORT`, `WEBHOOK_SENT`, `WEBHOOK_FAILED`, `META_EVENT_SENT`, `META_EVENT_FAILED`) and
-  surfaced on the member detail page.
-* **Admin UI** — session login (`POST /admin/login`, scrypt-hashed password), member list with
-  full-text search, status / `utm_source` / date-range filters, pagination (10/25/50/100), member
-  detail with attribution and the last 200 events, and a CSV export that honours the active
-  filters. The export is hardened against spreadsheet formula injection and emits a UTF-8 BOM so
-  Excel opens Vietnamese text correctly.
+  `MEMBER_UPDATED`, `LOGIN`, `EXPORT`, `WEBHOOK_SENT`, `WEBHOOK_FAILED`, `META_EVENT_SENT`,
+  `META_EVENT_FAILED`) and surfaced on the member detail page.
+* **Admin UI** — session login (`POST /admin/login`, scrypt-hashed password) and a dashboard
+  (`GET /admin/dashboard`, also the post-login landing page) showing the headline counters (total,
+  pending, verified, verification rate, registrations in the last 7 days, marketing consent — plus
+  *đã huỷ* / *bị chặn* cards only when non-zero), a zero-filled 14-day registrations chart drawn with
+  decile CSS classes (no inline styles), the top-5 UTM sources and top-5 UTM campaigns (`NULL` ⇒
+  “không xác định”), the 10 newest members and quick links to the member list, the CSV export and the
+  public `/register` page. The member list offers full-text search, status / `utm_source` /
+  date-range filters and pagination (10/25/50/100); the member detail page shows attribution and the
+  last 200 events and hosts the management form (status, notes ≤ 2000 chars, marketing consent) and a
+  “resend verification” action for `pending` members. Every management change is audited as exactly
+  one `MEMBER_UPDATED` event (`{"actor": …, "changed": {field: [old, new]}}`); a submission that
+  changes nothing writes no event. The CSV export honours the active filters, is hardened against
+  spreadsheet formula injection and emits a UTF-8 BOM so Excel opens Vietnamese text correctly.
 * **Public API** — `/api/v1` JSON with a single response envelope, `X-API-Key` auth (mandatory in
   production), its own rate limit, request-id echo, and 201-vs-200 semantics that make duplicate
   registrations idempotent.
@@ -93,10 +112,10 @@ app/
 ├── routers/
 │   ├── public.py        HTML surface: landing page (GET /), /health, /register, /check-email, /verify-email, /welcome, /robots.txt
 │   ├── api_v1.py        JSON API: register, get-by-id, lookup-by-email, resend-verification, health
-│   └── admin.py         admin UI: login/logout, member list, CSV export, member detail
+│   └── admin.py         admin UI: login/logout, dashboard, member list/detail/edit, CSV export
 ├── services/
 │   ├── members.py       registration + verification lifecycle (owns every transaction)
-│   ├── admin.py         admin filters/pagination queries + formula-injection-safe CSV writer
+│   ├── admin.py         dashboard aggregates, member filters/pagination, validated edits + formula-injection-safe CSV writer
 │   └── events.py        record_event() — the audit trail used by every module
 ├── email/
 │   └── service.py       console / SMTP backends, Vietnamese verification email (text + HTML)
@@ -104,7 +123,7 @@ app/
 │   ├── dispatch.py      post-commit fan-out; never raises; records WEBHOOK_*/META_* events
 │   ├── webhook.py       signed member.verified delivery with retries and backoff
 │   └── meta.py          Meta Conversions API CompleteRegistration (opt-in, hashed PII only)
-├── templates/           Jinja2: base, landing, register, check_email, verify_result, welcome, error, admin/*
+├── templates/           Jinja2: base, landing, register, check_email, verify_result, welcome, error, admin/{login,dashboard,members,member_detail}
 └── static/              css/app.css, css/landing.css, js/register.js (first-touch attribution capture)
 ```
 
@@ -209,8 +228,10 @@ cp .env.example .env
 
 # 4. create the admin password hash (interactive prompt; paste the value into .env)
 python -m app.cli hash-password
-#    → prints e.g.  scrypt$16384$8$1$<salt_b64>$<hash_b64>
+#    → prints e.g.  scrypt:16384:8:1:<salt_b64>:<hash_b64>
 #    → set ADMIN_EMAIL and ADMIN_PASSWORD_HASH in .env to enable the admin UI
+#    → keep the ":" separator exactly as printed: a "$"-separated hash is corrupted by
+#      Docker Compose env_file interpolation and by shell `source` (see §4.5 and §12)
 
 # 5. create the schema
 alembic upgrade head
@@ -340,7 +361,7 @@ Every setting below exists in `app/config.py` (`Settings`). Grouping mirrors `.e
 | Variable | Default | Required in production | Meaning |
 |---|---|---|---|
 | `ADMIN_EMAIL` | *(empty)* | Recommended | Admin login address (compared case-insensitively). Empty **or** empty hash disables the whole admin UI. |
-| `ADMIN_PASSWORD_HASH` | *(empty)* | **Yes (guard) when the admin UI is enabled** | scrypt hash produced by `python -m app.cli hash-password` (format `scrypt$n$r$p$salt$hash`). Never a plain password. In production, a placeholder value is refused at startup **when `ADMIN_EMAIL` and this hash are both non-empty**; leaving either empty simply disables the admin UI instead. |
+| `ADMIN_PASSWORD_HASH` | *(empty)* | **Yes (guard) when the admin UI is enabled** | scrypt hash produced by `python -m app.cli hash-password`, encoded as **`scrypt:<n>:<r>:<p>:<salt_b64>:<digest_b64>`** — colon separated, **no `$`**. A `$`-separated value is silently corrupted by Docker Compose `env_file` interpolation (`$1`, `$16384` …) and by shell `source`, which breaks admin login (this happened in production); `verify_password` still accepts legacy `$` hashes, but new hashes are always emitted with `:`. A **malformed** hash blocks startup in production whenever `ADMIN_EMAIL` is also set. Never a plain password. In production, a placeholder value is refused at startup **when `ADMIN_EMAIL` and this hash are both non-empty**; leaving either empty simply disables the admin UI instead. See §12. |
 
 ### 4.6 Email / verification
 
@@ -471,7 +492,7 @@ Run migrations **before** restarting the application on every release.
 | `members` | One row per member: UUID `id`, `full_name`, unique lower-cased `email`, optional `phone` / `company`, `status` (`pending` \| `verified` \| `unsubscribed` \| `blocked`), `consent_marketing`, `email_verified_at`, `source` (`web_form`, `api`, `viporder`, `vipgroup`, `import`, `other`), free-text `notes`, `created_at`, `updated_at`. |
 | `member_attribution` | Exactly one row per member (`member_id` unique, `ON DELETE CASCADE`): `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, `landing_url`, `referrer`, `fbp`, `fbc`, `user_agent`, `ip_hash`, `created_at`. First-touch wins — a later registration of the same email only fills fields that are still empty. |
 | `email_verification_tokens` | One row per issued link: `member_id`, unique `token_hash` (SHA-256 hex of the raw token), `expires_at`, `used_at` (`NULL` = still usable), `created_at`. Issuing a new token sets `used_at` on all unused tokens of that member, so only the newest link works. |
-| `member_events` | Append-only audit trail: `member_id` (nullable for pre-creation and login events), `event_type`, `metadata_json`, `created_at`. Types: `REGISTER_STARTED`, `REGISTER_COMPLETED`, `EMAIL_SENT`, `EMAIL_FAILED`, `EMAIL_VERIFIED`, `LOGIN`, `EXPORT`, `WEBHOOK_SENT`, `WEBHOOK_FAILED`, `META_EVENT_SENT`, `META_EVENT_FAILED`. |
+| `member_events` | Append-only audit trail: `member_id` (nullable for pre-creation and login events), `event_type`, `metadata_json`, `created_at`. Types: `REGISTER_STARTED`, `REGISTER_COMPLETED`, `EMAIL_SENT`, `EMAIL_FAILED`, `EMAIL_VERIFIED`, `MEMBER_UPDATED`, `LOGIN`, `EXPORT`, `WEBHOOK_SENT`, `WEBHOOK_FAILED`, `META_EVENT_SENT`, `META_EVENT_FAILED`. |
 | `alembic_version` | Alembic’s own bookkeeping (current revision). |
 
 ### 5.3 Privacy rule — no raw IPs, ever
@@ -1028,8 +1049,24 @@ Never send raw PII: hash first, and keep `ip_hash`/raw IPs out of the payload.
 
 ## 10. Production deployment notes
 
-The full recipe (systemd unit, nginx/TLS, PostgreSQL role creation, backup/restore, rollback,
-monitoring) is in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**. The short version:
+**The service is live** at <https://member.quangkhoiwellnessretreat.com> (VPS `160.22.170.20`),
+deployed as the Docker Compose stack in `/srv/member` documented in
+**[`deploy/README.md`](deploy/README.md)** — that file is the operational runbook (host layout,
+`env/app.env` + `env/stack.env`, Compose services, shared-Caddy vhost, updates, backups, rollback).
+The stack runs PostgreSQL 16 in its own container, the app in a **non-root** container whose ports
+are published on loopback only, behind a **shared Caddy** container that terminates Let's Encrypt
+TLS. `EMAIL_MODE=smtp` points at a temporary internal SMTP sink (loopback-only web UI) until the
+Gmail credentials are configured, `MEMBER_API_KEY` is set and the admin UI is enabled. A production
+acceptance of **34 checks over HTTPS** was run against the live domain: real delivery through the
+configured SMTP backend, admin login, CSV export, the API with the production key, the non-root
+container and the loopback-only ports. **Honest caveats:** members do **not** receive real email
+until the Gmail credentials are configured (the sink captures it), and **Meta is disabled** until a
+pixel id + access token are set (§4.9).
+
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) remains the host-level reference recipe (systemd unit,
+nginx/TLS, PostgreSQL role creation, backup/restore, rollback, monitoring): use it for a
+bare-metal/VM install or when the Compose stack is not an option. The short version, valid for either
+shape:
 
 * **Database:** PostgreSQL 16 with `DATABASE_URL=postgresql+psycopg://…`; SQLite is dev/CI only.
 * **Env vars:** start from `.env.example`, keep the file `chmod 600` and out of git.
@@ -1060,9 +1097,13 @@ monitoring) is in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**. The short vers
 * **HTTPS-only cookies:** `SESSION_HTTPS_ONLY` is unset by default and resolves to `true` in
   production or whenever `PUBLIC_BASE_URL` starts with `https://`; the CSRF cookie and HSTS follow
   the same switch. Do not disable it.
-* **Scope of this milestone:** **local-only — nothing is deployed to a VPS.** No server, domain,
-  systemd unit or managed database exists. Treat every deployment step above as unexecuted reference
-  material.
+* **Deployed topology:** a Docker Compose stack in `/srv/member` (app + PostgreSQL 16 + SMTP sink
+  containers) behind the shared Caddy container on ports 80/443; every Compose port is published on
+  `127.0.0.1` only, so nothing except Caddy is reachable from the internet. See
+  [`deploy/README.md`](deploy/README.md) for the exact commands.
+* **Hash encoding:** keep `ADMIN_PASSWORD_HASH` in its printed colon-separated `scrypt:…` form. A
+  `$`-separated value is silently corrupted by Compose `env_file` interpolation and breaks admin
+  login — see §4.5 and §12.
 
 ---
 
@@ -1093,7 +1134,8 @@ authenticated `admin_client`, a real local HTTP server that records webhook deli
 suite run against that database instead of the per-test SQLite file — truncating the four tables
 between tests — which is exactly what the CI `postgres` job does (so “the tests pass on
 PostgreSQL” is reproducible on any machine, not just in CI). The suite is **246 tests** at the time
-of writing (37 of them landing-page tests), green on SQLite and on PostgreSQL.
+of writing, green on SQLite **and** on PostgreSQL — including `tests/test_landing.py` (37 tests) and
+`tests/test_admin_dashboard.py` (41 tests).
 
 What is covered today:
 
@@ -1105,6 +1147,13 @@ What is covered today:
   capped and never 500; a `javascript:` contact URL is never rendered as an `href`; the hero title
   falls back to the tagline; and the page carries no `style="…"` attribute and no `<script>` without
   the CSP nonce.
+
+* **Admin dashboard** (`tests/test_admin_dashboard.py`) — the stat cards (including the
+  unsubscribed/blocked cards that only appear when non-zero), the zero-filled 14-day series and its
+  decile CSS classes, top-5 attribution with the `NULL` ⇒ “không xác định” bucket, the 10 recent
+  members, the `/admin` → `/admin/dashboard` redirects, the management form’s validation / audit /
+  no-change behaviour (including that a manual `verified` does **not** set `email_verified_at`) and
+  the allow-listed `?msg=` flash codes + `next=` target of the resend action.
 
 * **Email** (`tests/test_email.py`) — console backend output and greppability, SMTP message
   building / `From` fallback, and the guarantee that a failing backend returns
@@ -1130,7 +1179,9 @@ What is covered today:
 * **Admin UI** (`tests/test_admin.py`) and **CSV export** (`tests/test_export_csv.py`) — login,
   session guard, filters/search/pagination and the formula-injection-safe export.
 * **Security** (`tests/test_security.py`) — rate limits (including `Retry-After`), header/CSP
-  assertions, hashed-IP storage and token hashing.
+  assertions, hashed-IP storage, token hashing, and the **hash-encoding regressions**: new hashes use
+  the shell/Compose-safe `scrypt:…` separator (no `$`), legacy `$` hashes still verify, and a
+  malformed `ADMIN_PASSWORD_HASH` never authenticates and blocks a production boot.
 
 ### 11.1 End-to-end acceptance harness
 
@@ -1169,8 +1220,10 @@ default run leaves a throwaway `acceptance.db` in the repository root (git-ignor
 6. `POST /api/v1/members/register` → `201 duplicate:false`; repeat → `200 duplicate:true` with the
    same member id; `GET /api/v1/members?email=…` → the member.
 7. With `MEMBER_API_KEY` set: the same call without `X-API-Key` → `401 unauthorized`.
-8. Log into `/admin/login`, filter/search, and download `/admin/members.csv` → the export honours
-   the filters and `X-Total-Rows`.
+8. Log into `/admin/login` → you land on `/admin/dashboard` (counters, 14-day chart, top UTM
+   sources/campaigns, recent members). Filter/search on `/admin/members`, open a member, change the
+   status or notes and save (`?msg=member_updated`), use “Gửi lại xác minh” on a `pending` member,
+   then download `/admin/members.csv` → the export honours the filters and `X-Total-Rows`.
 9. With `MEMBER_VERIFIED_WEBHOOK_URL`/`_SECRET` pointed at a local receiver: verifying a member
    delivers `member.verified` with a signature that `hmac.compare_digest` accepts.
 10. `pytest -q` → green.
@@ -1190,8 +1243,14 @@ Implemented controls (all verifiable in the code):
   when cookies are secure) validated in constant time on every HTML `POST`; JSON `/api/*` endpoints
   are exempt by design (they are not cookie-authenticated) and that exemption is documented.
 * **scrypt admin password hash** — `hash_password()` uses scrypt (n=2¹⁴, r=8, p=1, dklen=32) with a
-  random 16-byte salt; `verify_password()` compares with `hmac.compare_digest` and never raises on a
-  malformed hash. The plain password is never stored or logged.
+  random 16-byte salt and emits the **colon-separated** encoding
+  `scrypt:<n>:<r>:<p>:<salt_b64>:<digest_b64>` (**no `$`**): a `$`-separated hash is interpolated away
+  by Docker Compose `env_file` values (`$1`, `$16384` …) and expanded by shell `source`, silently
+  corrupting it and locking the operator out of `/admin` — this happened in production, and
+  `tests/test_security.py` now locks the encoding in. `verify_password()` still accepts legacy
+  `$`-separated hashes, compares with `hmac.compare_digest` and never raises on a malformed hash;
+  a **malformed** `ADMIN_PASSWORD_HASH` blocks startup in production when the admin UI is enabled.
+  The plain password is never stored or logged.
 * **One-time hashed verification tokens** — `secrets.token_urlsafe(32)`; only `sha256(token)` is
   persisted, so a database leak cannot be replayed. Tokens expire, are superseded when reissued, and
   are consumed by an atomic conditional `UPDATE` (lost races get `used`).
@@ -1203,8 +1262,11 @@ Implemented controls (all verifiable in the code):
   can send the header themselves, spoofing it cannot change their rate-limit bucket or `ip_hash`.
 * **Rate limiting** — registration (HTML + API), `/api/v1/members*` and admin login, each keyed by
   the salted IP hash. `POST /api/v1/members/register` is checked against **both** the `register`
-  scope (`REGISTER_RATE_LIMIT`) and the `api` scope (`API_RATE_LIMIT`), and `resend-verification`
-  also carries a fixed per-member cap of 3 per hour. Exceeding a limit returns `429` **on both
+  scope (`REGISTER_RATE_LIMIT`) and the `api` scope (`API_RATE_LIMIT`), and the API
+  `POST /api/v1/members/{id}/resend-verification` also carries a fixed per-member cap of 3 per hour
+  (`resend:<member_id>` scope). The admin UI resend action (`POST
+  /admin/members/{id}/resend-verification`) is **not** rate-capped: it requires an authenticated
+  admin session + CSRF token and only re-sends for a `pending` member. Exceeding a limit returns `429` **on both
   branches** with a `Retry-After` header in seconds (JSON API: envelope with
   `error.code = "rate_limited"`; HTML: the Vietnamese error page). The in-process caveat for
   multi-worker deployments is documented in §10.
@@ -1248,8 +1310,9 @@ Implemented controls (all verifiable in the code):
 
 | Document | Contents |
 |---|---|
+| [`deploy/README.md`](deploy/README.md) | **Operational runbook of the live deployment:** `/srv/member` layout, env files, Docker Compose stack, shared Caddy + TLS, updates, backups, rollback. |
 | [`docs/API.md`](docs/API.md) | Complete endpoint reference: parameters, status codes, examples, error table, pagination/filter semantics, versioning policy. |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | How to plug MEMBER into VIPORDER / VIP GROUP / VIP AI / Marketing Hub: integration styles, sequence diagrams, idempotency, tenant setup, Python client example. |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production recipe: PostgreSQL, systemd, nginx + TLS, backups, monitoring, rollback. |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Host-level production recipe: PostgreSQL, systemd, nginx + TLS, backups, monitoring, rollback. |
 | [`docs/INTERNAL_CONTRACT.md`](docs/INTERNAL_CONTRACT.md) | Frozen internal interfaces between modules (service signatures, envelope, HTTP surface). |
 | `.env.example` | Every environment variable with inline comments. |
