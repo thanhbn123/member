@@ -201,10 +201,34 @@ def _build_message(
         message["From"] = formataddr((settings.smtp_from_name, sender)) if settings.smtp_from_name else sender
     message["To"] = to
     message["Subject"] = subject
+    if settings.brand_support_email:
+        message["Reply-To"] = settings.brand_support_email
     message.set_content(text_body)
     if html_body:
         message.add_alternative(html_body, subtype="html")
     return message
+
+
+def _capture_data_reply(smtp) -> dict[str, str]:
+    """Remember the server's reply to the DATA command on this client instance.
+
+    ``sendmail()`` only returns the recipients that were *refused*, so a fully accepted
+    message yields an empty dict and the provider's ``250 2.0.0 OK <queue id> - gsmtp``
+    acceptance line would otherwise be lost. Wrapping the instance method (rather than
+    subclassing) keeps ``smtplib.SMTP`` / ``SMTP_SSL`` itself patchable in tests.
+    """
+    captured: dict[str, str] = {}
+    original = getattr(smtp, "data", None)
+    if original is None:  # a test double without the DATA step: nothing to capture
+        return captured
+
+    def data(msg):  # type: ignore[no-untyped-def]
+        code, response = original(msg)
+        captured["line"] = f"{code} {response}".strip()[:300]
+        return code, response
+
+    smtp.data = data
+    return captured
 
 
 def _send_smtp(
@@ -215,19 +239,16 @@ def _send_smtp(
         # Port 465 speaks TLS from the first byte; 587/25 upgrade with STARTTLS.
         client = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
         with client(settings.smtp_host, settings.smtp_port, timeout=settings.smtp_timeout_seconds) as smtp:
+            captured = _capture_data_reply(smtp)
             if settings.smtp_tls and settings.smtp_port != 465:
                 smtp.starttls()
             if settings.smtp_user:
                 smtp.login(settings.smtp_user, settings.smtp_password)
-            response = smtp.send_message(message)
+            smtp.send_message(message)
     except Exception as exc:  # email must never break the caller
         logger.warning("SMTP delivery to %s failed: %s", to, exc)
         return EmailResult(False, SMTP_BACKEND, error=str(exc) or exc.__class__.__name__)
 
-    # smtplib returns {recipient: (code, message)} for the accepted message.
-    detail = ""
-    if isinstance(response, dict) and response:
-        code, text = next(iter(response.values()))
-        detail = f"{code} {text}".strip()[:300]
+    detail = captured.get("line", "")
     logger.info("SMTP delivery to %s succeeded (subject=%s, response=%s)", to, subject, detail or "n/a")
     return EmailResult(True, SMTP_BACKEND, detail=detail or None)

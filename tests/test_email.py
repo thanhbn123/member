@@ -258,8 +258,17 @@ def test_email_result_carries_the_provider_acceptance_line(monkeypatch):
             return (235, b"ok")
 
         def send_message(self, message):
+            # Mirrors smtplib: send_message -> sendmail -> data(). A fully accepted message
+            # returns {} and the provider's acceptance line only exists on the DATA reply.
             sent.append({"to": message["To"], "subject": message["Subject"]})
-            return {message["To"]: (250, "2.0.0 OK  1730000000 abc123-gsmtp")}
+            self.data(message.as_bytes())
+            return {}
+
+        def data(self, msg):
+            return 250, "2.0.0 OK  1730000000 abc123-gsmtp - gsmtp"
+
+        def quit(self):
+            return 221, b"bye"
 
     for key, value in {
         "EMAIL_MODE": "smtp",
